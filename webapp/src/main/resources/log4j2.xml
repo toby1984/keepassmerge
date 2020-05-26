@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration monitorInterval="5">
+    <Appenders>
+        <Console name="STDOUT" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d %-5p [%t|%X{user}] %C:%L - %m%n "/>
+        </Console>
+        <File name="file" fileName="/tmp/startup2.log">
+            <PatternLayout pattern="%d %-5p [%t|%X{user}] %C:%L - %m%n"/>
+        </File>
+    </Appenders>
+    <Loggers>
+        <!-- <Logger name="org.springframework.transaction" level="debug"/> -->
+        <Root level="info">
+            <AppenderRef ref="STDOUT"/>
+            <!--  <AppenderRef ref="file"/> -->
+        </Root>
+    </Loggers>
+</Configuration>

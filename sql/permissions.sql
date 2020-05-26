@@ -1,0 +1,6 @@
+\c keepassmerge
+
+GRANT USAGE ON SCHEMA public TO keepassmerge;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO keepassmerge; 
+GRANT SELECT,INSERT,UPDATE,DELETE,TRUNCATE ON ALL TABLES IN SCHEMA public TO keepassmerge;
+REVOKE CREATE ON DATABASE keepassmerge FROM keepassmerge;

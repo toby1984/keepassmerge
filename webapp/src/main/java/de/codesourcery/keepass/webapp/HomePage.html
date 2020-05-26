@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Copyright 2020 Tobias Gierke <tobias.gierke@code-sourcery.de>
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:wicket="http://wicket.apache.org/">
+<head>
+  <style>
+    body {
+      background-color: black;
+      color: chartreuse;
+      font-family: 'Open Sans', sans-serif;
+    }
+    table#auditLog {
+      margin-bottom: 25px;
+    }
+    table#auditLog td {
+      border:1px solid chartreuse;
+    }
+    table#auditLog td div {
+      padding:5px;
+    }
+    table#auditLog tr.headers {
+      font-weight: bolder;
+    }
+    ul.feedbackPanel {
+      list-style: none;
+    }
+    li.feedbackPanelDEBUG {
+      color: grey;
+    }
+    li.feedbackPanelINFO {
+      color: white;
+    }
+    li.feedbackPanelSUCCESS {
+      color: green;
+    }
+    li.feedbackPanelWARNING {
+      color: yellow;
+    }
+    li.feedbackPanelERROR,li.feedbackPanelFATAL {
+      color: red;
+    }
+  </style>
+</head>
+<body>
+<table id="auditLog" wicket:id="auditLog"/>
+
+<form wicket:id="uploadForm">
+  <div wicket:id="feedback"/>
+  Password: <input type="password" wicket:id="password"/>
+  <input type="file" wicket:id="fileUpload" value="Upload" multiple="true"/>
+  <input type="submit" wicket:id="downloadLink" value="Download" />
+  <input type="submit" wicket:id="uploadButton" value="Upload" />
+</form>
+</body>
+</html>
