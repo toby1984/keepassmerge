@@ -101,4 +101,4 @@ Setting up SSL client authentication for Tomcat is "slightly" more involved so I
 
 If you did everything correctly, you shoud be able to navigate to "https://your.server/keepassweb" and be greeted with something like this:
 
-[https://github.com/toby1984/keepassmerge/blob/master/screenshot.png]
+![Screenshot](https://github.com/toby1984/keepassmerge/blob/master/screenshot.png)
