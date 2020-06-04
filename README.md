@@ -76,3 +76,26 @@ This is useful to make brute-forcing the file's password harder.
 ## TODO
 
 - add support for adding missing groups as well
+
+# web application
+
+The web application consists of a single page (build with the excellent Apache Wicket) that keeps a single
+.kdbx (the master file) on the web server and lets you
+
+- download the master file
+- upload & then merge one or more .kdx files into the master file
+- view an audit log of all download and merge operations (the log is stored in a single PostgreSQL table)
+- receive an e-mail whenever the master file was downloaded or changed
+
+I've secured the application using SSL client authentication, additionally downloading the file and merging files (for obvious reasons) requires you to enter the master file's password. 
+
+I'm thinking about storing the master file password encrypted on the server instead and have the user provide a password that is then used to decrypt the master password ..but as I'm using Let's Encrypt certificates and rather strict SSL settings I'm not so scared of someone listening in on the password transmission.
+
+The web application is loading it's configuration from the classpath, so in case of tomcat you'll need to put a 'keePassMerge.properties' file inside the ${catalina.home}/libs folder.
+
+A sample file is contained in the /config folder of this repository, you'll need to adjust it to suit your own setup.
+
+The PostgreSQL SQL files to setup the database are contained in the /sql folder.
+
+Setting up SSL client authentication for Tomcat is "slightly" more involved so I'm going to be lazy and just point you to google search...
+- keeping track of an audit-log that 
