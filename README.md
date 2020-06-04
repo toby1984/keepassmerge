@@ -98,4 +98,7 @@ A sample file is contained in the /config folder of this repository, you'll need
 The PostgreSQL SQL files to setup the database are contained in the /sql folder.
 
 Setting up SSL client authentication for Tomcat is "slightly" more involved so I'm going to be lazy and just point you to google search...
-- keeping track of an audit-log that 
+
+If you did everything correctly, you shoud be able to navigate to "https://your.server/keepassweb" and be greeted with something like this:
+
+[https://github.com/toby1984/keepassmerge/blob/master/screenshot.png]
