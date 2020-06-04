@@ -166,15 +166,15 @@ public class Main
                         }
                     }
                 }
-                final Optional<Database> merged = MergeHelper.combine(sources.values(), (level, msg, t) -> {});
-                if (merged.isPresent())
+                final MergeHelper.MergeResult merged = MergeHelper.combine(sources.values(), (level, msg, t) -> {});
+                if ( merged.mergedDatabaseChanged() || ! merged.mergedDatabase().resource.isSame(IResource.file(destination) ) )
                 {
-                    final char[] password = readPassword(merged.get().resource);
+                    final char[] password = readPassword(merged.mergedDatabase().resource);
 
                     LOG.info("Writing result to " + destination.getAbsolutePath());
                     try (Serializer out = new Serializer(new FileOutputStream(destination)))
                     {
-                        merged.get().write(List.of(Credential.password(password)), out, minKeyDerivationTime, (level, msg, t) -> {
+                        merged.mergedDatabase().write(List.of(Credential.password(password)), out, minKeyDerivationTime, (level, msg, t) -> {
                             //
                         });
                     }

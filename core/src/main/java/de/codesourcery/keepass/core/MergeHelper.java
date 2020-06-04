@@ -36,14 +36,20 @@ public class MergeHelper
 {
     private static final Logger LOG = LoggerFactory.getLogger(MergeHelper.class);
 
+    public static record MergeResult(Database mergedDatabase, boolean mergedDatabaseChanged) {}
+
     /**
      * Perform merge.
      *
+     * Note that this method will pick the input database with the most entries
+     * and use this one to merge all the others into. The result of this method
+     * will indicate which database has been chosen as the merge destination.
+     *
      * @param sources databases to combine
      * @param progressCallback callback invoked to provide progress information to the user
-     * @return combined database file.
+     * @return Merge result.
      */
-    public static Optional<Database> combine(Collection<Database> sources, Logger progressCallback)
+    public static MergeResult combine(Collection<Database> sources, Logger progressCallback)
     {
         Validate.notNull(sources, "sources must not be null");
 
@@ -83,6 +89,6 @@ public class MergeHelper
         } else {
             progressCallback.info("Combining the files yielded no changes");
         }
-        return dataChanged ? Optional.of(mostEntriesView.database) : Optional.empty();
+        return new MergeResult(mostEntriesView.database,dataChanged);
     }
 }

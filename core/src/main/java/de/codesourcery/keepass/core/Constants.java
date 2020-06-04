@@ -24,5 +24,5 @@ public class Constants
 {
     public static final boolean HEXDUMP_PAYLOAD = false;
     public static final boolean DUMP_XML = true;
-    public static final boolean DEBUG_MERGING = false;
+    public static final boolean DEBUG_MERGING = true;
 }

@@ -206,11 +206,11 @@ public class HomePage extends WebPage
             }
             final File original = configuration.getMergeTarget();
 
-            final Database db = new Database();
+            final Database originalDb = new Database();
             LOG.info("onSubmit(): Opening local file " + original.getAbsolutePath());
-            db.load(credentials, IResource.file( original ) );
+            originalDb.load(credentials, IResource.file( original ) );
             LOG.info("onSubmit(): Successfully opened local file " + original.getAbsolutePath());
-            databases.add(db);
+            databases.add(originalDb);
 
             LOG.info("onSubmit(): Performing vault merge for "+getRemoteIP());
             MailHelper.getInstance().sendMail("Performing vault merge for " + getRemoteIP(), "<no body>");
@@ -226,10 +226,10 @@ public class HomePage extends WebPage
                     case ERROR -> feedback.error(msg);
                 }
             };
-            final Optional<Database> updatedDatabase = MergeHelper.combine(databases, feedbackLogger);
-            if ( updatedDatabase.isPresent() )
+            final MergeHelper.MergeResult updatedDatabase = MergeHelper.combine(databases, feedbackLogger);
+            if ( updatedDatabase.mergedDatabaseChanged() || ! updatedDatabase.mergedDatabase().resource.isSame(originalDb.resource) )
             {
-                performMerge(credentials, configuration, original, updatedDatabase.get(), feedbackLogger);
+                performMerge(credentials, configuration, original, updatedDatabase.mergedDatabase(), feedbackLogger);
                 feedback.success("Databases merged successfully.");
                 auditLog.write( getRemoteIP(), logger ->
                 {
@@ -254,7 +254,8 @@ public class HomePage extends WebPage
     }
 
     private static synchronized void performMerge(List<Credential> credentials, Configuration config,
-                                                  File original, Database updatedDatabase,
+                                                  File original,
+                                                  Database updatedDatabase,
                                                   de.codesourcery.keepass.core.util.Logger progressLogger) throws IOException
     {
         final File tmpOut = File.createTempFile("tmp_keepassx", ".kdbx", config.getTempFolder());

@@ -47,16 +47,16 @@ public class MergeTest extends TestCase
         System.out.println("============= merge #1 ============");
         final List<String> messages = new ArrayList<>();
 
-        boolean dbChanged = MergeHelper.combine(List.of(db1,db2),logger(messages)).isPresent();
-        assertTrue(dbChanged);
+        MergeHelper.MergeResult result = MergeHelper.combine(List.of(db1,db2),logger(messages));
+        assertTrue(result.mergedDatabaseChanged());
 
         assertTrue( messages.stream().anyMatch(x -> x.contains( "Replacing entry ZabZxYVp54uFOVCvdosurw== ('Entry #1 (updated once)') from 2020-06-02T11:22:33Z with entry Entry #1 (updated twice) , modified on 2020-06-02T11:22:47Z" )));
         assertTrue( messages.stream().anyMatch(x -> x.contains( "Replacing entry hFasaI7w+soFfXCtHn2VvQ== ('Entry #2') from 2020-06-02T10:43:09Z with entry Entry #2 , modified on 2020-06-02T10:43:57Z" )));
 
         System.out.println("============= merge #2 ============");
         messages.clear();
-        dbChanged = MergeHelper.combine(List.of(db1,db2),logger(messages)).isPresent();
-        assertFalse(dbChanged);
+        result = MergeHelper.combine(List.of(db1,db2),logger(messages));
+        assertFalse(result.mergedDatabaseChanged());
         assertTrue(messages.stream().anyMatch(x -> x.contains("Combining the files yielded no changes")));
     }
 
@@ -71,8 +71,8 @@ public class MergeTest extends TestCase
         System.out.println("============= merge #1 ============");
         final List<String> messages = new ArrayList<>();
 
-        boolean dbChanged = MergeHelper.combine(List.of(db1,db2),logger(messages)).isPresent();
-        assertTrue(dbChanged);
+        MergeHelper.MergeResult result = MergeHelper.combine(List.of(db1,db2),logger(messages));
+        assertTrue(result.mergedDatabaseChanged());
 
         assertTrue(messages.stream().anyMatch(x -> x.contains("Locating entry with UUID 6pERdkjul0TJ9SJ0JNl3KQ== failed but using title 'Entry #1' succeeded.")));
         assertTrue( messages.stream().anyMatch(x -> x.contains( "Replacing entry O3t2bZc6QuT8SQ+GhqOHpw== ('Entry #1') from 2020-06-03T13:40:36Z with entry Entry #1 , modified on 2020-06-03T13:47:14Z")));
@@ -80,8 +80,8 @@ public class MergeTest extends TestCase
 
         System.out.println("============= merge #2 ============");
         messages.clear();
-        dbChanged = MergeHelper.combine(List.of(db1,db2),logger(messages)).isPresent();
-        assertFalse(dbChanged);
+        result = MergeHelper.combine(List.of(db1,db2),logger(messages));
+        assertFalse(result.mergedDatabaseChanged());
         assertTrue(messages.stream().anyMatch(x -> x.contains("Combining the files yielded no changes")));
     }
 }

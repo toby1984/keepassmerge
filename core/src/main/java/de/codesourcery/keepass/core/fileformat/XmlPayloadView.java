@@ -260,12 +260,13 @@ public class XmlPayloadView
 
         LOG.info("Merging " + other.database.resource + " into "+this.database.resource);
 
-        boolean xmlPayloadChanged = false;
         final Document document = this.database.getDecryptedXML();
         final Document otherDocument = other.database.getDecryptedXML();
         final List<EntryGroup> existingGroups = getGroups();
 
         progressCallback.info("Merging "+other.database.resource+" into "+this.database.resource);
+
+        boolean xmlPayloadChanged = false;
 
         for ( EntryGroup newGroup : other.getGroups() )
         {
