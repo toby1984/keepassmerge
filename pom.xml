@@ -10,7 +10,7 @@
     <javac.source>14</javac.source>
     <javac.target>14</javac.target>
     <javac.release>14</javac.release>
-    <wicket.version>8.8.0</wicket.version>
+    <wicket.version>8.9.0</wicket.version>
     <main.basedir>${project.basedir}</main.basedir>
   </properties>
   <developers>
