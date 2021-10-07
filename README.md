@@ -10,7 +10,7 @@ As is to be expected, over time the files on each device started to diverge more
 reset my password for some service because the "right" KeePassX file with the corresponding password was on a different device...
 
 To finally have my cake and eat it, I wrote a small Java library to read,merge and write KeePassX 2.x files and integrated it into a
-web application that I'm running on my own physical server. The command-line tool is working but mostly exists because it wanted something
+web application that I'm running on my own physical server. The command-line tool is working but mostly exists because I wanted something
 to test my library before starting to work on the web application.
 
 > While this tool works fine for me, you're hereby strongly advised to do as I do and keep
