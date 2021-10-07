@@ -59,18 +59,18 @@ public class WicketApplication extends WebApplication
 
         getComponentInstantiationListeners().add(component ->
         {
-            if (component.getClass().getAnnotation(Protected.class) != null)
-            {
-                final HttpServletRequest request = (HttpServletRequest) RequestCycle.get().getRequest().getContainerRequest();
-                final X509Certificate[] certs = (X509Certificate[]) request.getAttribute("javax.servlet.request.X509Certificate");
-                if ( ! certCheck.isValid(certs))
-                {
-                    if ( LOG.isDebugEnabled() ) {
-                        LOG.warn("onInstantiation(): Denying client "+request.getRemoteAddr()+" access to component "+component);
-                    }
-                    throw new RestartResponseAtInterceptPageException(AccessDeniedPage.class);
-                }
-            }
+//            if (component.getClass().getAnnotation(Protected.class) != null)
+//            {
+//                final HttpServletRequest request = (HttpServletRequest) RequestCycle.get().getRequest().getContainerRequest();
+//                final X509Certificate[] certs = (X509Certificate[]) request.getAttribute("javax.servlet.request.X509Certificate");
+//                if ( ! certCheck.isValid(certs))
+//                {
+//                    if ( LOG.isDebugEnabled() ) {
+//                        LOG.warn("onInstantiation(): Denying client "+request.getRemoteAddr()+" access to component "+component);
+//                    }
+//                    throw new RestartResponseAtInterceptPageException(AccessDeniedPage.class);
+//                }
+//            }
         });
     }
 }

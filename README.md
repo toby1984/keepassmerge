@@ -20,12 +20,12 @@ to test my library before starting to work on the web application.
 
 ## Requirements (running)
 
-Java >= 14
+Java >= 17
 
 ## Requirements (building)
 
-Java >= 14
-Maven >= 3.6.1
+Java >= 17
+Maven >= 3.8.1
 
 ## Building
 
