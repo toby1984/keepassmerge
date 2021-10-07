@@ -3,3 +3,5 @@ local_development
 target
 *.iml
 .idea
+.idea_runconfigurations
+.run
