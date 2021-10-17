@@ -19,11 +19,13 @@ import org.apache.commons.lang3.Validate;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import javax.mail.*;
-import javax.mail.internet.InternetAddress;
+import javax.mail.Authenticator;
+import javax.mail.Message;
+import javax.mail.PasswordAuthentication;
+import javax.mail.Session;
+import javax.mail.Transport;
 import javax.mail.internet.MimeMessage;
 import java.io.IOException;
-import java.sql.Connection;
 import java.util.Date;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicReference;

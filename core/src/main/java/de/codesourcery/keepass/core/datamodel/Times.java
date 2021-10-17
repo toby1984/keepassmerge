@@ -30,4 +30,18 @@ public class Times
     public boolean expires;
     public int usageCount;
     public ZonedDateTime locationChanged;
+
+    @Override
+    public String toString()
+    {
+        return "Times{" +
+            "lastModificationTime=" + lastModificationTime +
+            ", creationTime=" + creationTime +
+            ", lastAccessTime=" + lastAccessTime +
+            ", expiryTime=" + expiryTime +
+            ", expires=" + expires +
+            ", usageCount=" + usageCount +
+            ", locationChanged=" + locationChanged +
+            '}';
+    }
 }

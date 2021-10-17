@@ -15,6 +15,7 @@
  */
 package de.codesourcery.keepass.core.datamodel;
 
+import de.codesourcery.keepass.core.util.Misc;
 import org.apache.commons.lang3.Validate;
 
 import java.util.Arrays;
@@ -34,6 +35,10 @@ public class UUID
         Validate.notNull(data, "data must not be null");
         Validate.isTrue(data.length > 0, "UUID must have at least length 1 but had "+data.length);
         this.data = data;
+    }
+
+    public static UUID fromHex(String hex) {
+        return new UUID( Misc.fromHexString( hex ) );
     }
 
     public String base64() {
@@ -60,5 +65,9 @@ public class UUID
     public String toString()
     {
         return base64();
+    }
+
+    public String toHex() {
+        return Misc.toHexString( this.data, "" );
     }
 }

@@ -15,49 +15,47 @@
  */
 package de.codesourcery.keepass.core.datamodel;
 
-import de.codesourcery.keepass.core.fileformat.FileHeader;
+import de.codesourcery.keepass.core.fileformat.Database;
 import org.apache.commons.lang3.Validate;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 /**
- * Information which key/value items inside the XML payload
- * are encrypted using the {@link FileHeader#getInnerEncryptionAlgorithm() 'inner encryption algorithm'}.
+ * Configuration that tracks which key/value items inside the XML payload
+ * need to be encrypted/decrypted using the {@link Database#getInnerEncryptionAlgorithm inner encryption algorithm}.
  *
  * @author tobias.gierke@code-sourcery.de
- * @see FileHeader#getInnerEncryptionAlgorithm()
+ * @see Database#getInnerEncryptionAlgorithm()
  */
 public class MemoryProtection
 {
-    private static final Map<String,ProtectedItem> KEY_TO_ITEM;
-
+    /**
+     * Enumeration of 'items' inside the XML that may be encrypted.
+     */
     public enum ProtectedItem
     {
-        TITLE("Title"),
-        USERNAME("UserName"),
-        PASSWORD("Password"),
-        URL("URL"),
-        NOTES("Notes");
-        public final String xmlKeyValue;
+        TITLE,
+        USERNAME,
+        PASSWORD,
+        URL,
+        NOTES;
 
-        ProtectedItem(String xmlKeyValue)
-        {
-            this.xmlKeyValue = xmlKeyValue;
-        }
-
-        public static ProtectedItem lookupByKeyName(String keyName) {
+        public static Optional<ProtectedItem> lookupByKeyName(String keyName) {
             Validate.notBlank( keyName, "keyName must not be null or blank");
-            final ProtectedItem item = KEY_TO_ITEM.get(keyName);
-            if ( item == null ) {
-                throw new IllegalArgumentException("Unknown key '"+keyName+"'");
-            }
-            return item;
+            ProtectedItem item = switch( keyName ) {
+                case "Title" -> ProtectedItem.TITLE;
+                case "UserName" -> ProtectedItem.USERNAME;
+                case "Password" -> ProtectedItem.PASSWORD;
+                case "URL" -> ProtectedItem.URL;
+                case "Notes" -> ProtectedItem.NOTES;
+                // At least KeePassXC stores additional URLs using these keys
+                default -> keyName.matches( "^KP2A_URL(_\\d+)?$" ) ? ProtectedItem.URL : null;
+            };
+            return Optional.ofNullable( item );
         }
-    }
-
-    static {
-        KEY_TO_ITEM = Collections.unmodifiableMap(Arrays.stream(ProtectedItem.values()).collect(Collectors.toMap(x->x.xmlKeyValue,y->y)));
     }
 
     private final Map<ProtectedItem,Boolean> settings;
@@ -65,10 +63,6 @@ public class MemoryProtection
     public MemoryProtection() {
         settings = new HashMap<>();
         Arrays.stream( ProtectedItem.values() ).forEach(x -> settings.put(x,Boolean.TRUE));
-    }
-
-    public boolean hasAnyProtectedItems() {
-        return Arrays.stream( ProtectedItem.values() ).anyMatch(settings::get);
     }
 
     public boolean isProtectionEnabled(ProtectedItem item) {

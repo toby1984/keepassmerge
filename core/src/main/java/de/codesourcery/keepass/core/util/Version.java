@@ -13,23 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.codesourcery.keepass.webapp;
+package de.codesourcery.keepass.core.util;
 
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Inherited;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
-
-/**
- * Annotation that indicates a UI component should
- * only be accessible to authenticated users.
- *
- * @author tobias.gierke@code-sourcery.de
- */
-@Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.TYPE)
-@Inherited
-public @interface Protected
+public record Version(int major, int minor) implements Comparable<Version>
 {
+    @Override
+    public String toString()
+    {
+        return major+"."+minor;
+    }
+
+    public boolean hasMajorVersion(int version) {
+        return this.major == version;
+    }
+
+    @Override
+    public int compareTo(Version o)
+    {
+        final int result = Integer.compare( this.major, o.major );
+        return result != 0 ? result : Integer.compare( this.minor, o.minor );
+    }
 }

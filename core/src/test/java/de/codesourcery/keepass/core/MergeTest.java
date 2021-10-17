@@ -26,7 +26,6 @@ import javax.crypto.BadPaddingException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
 
 public class MergeTest extends TestCase
 {
@@ -41,8 +40,8 @@ public class MergeTest extends TestCase
         final List<Credential> credentials = List.of(Credential.password("test".toCharArray()));
         final IResource resource1 = IResource.classpath("/mergetest_1.kdbx");
         final IResource resource2 = IResource.classpath("/mergetest_2.kdbx");
-        final Database db1 = new Database().load(credentials,resource1);
-        final Database db2 = new Database().load(credentials,resource2);
+        final Database db1 = new Database().read(credentials,resource1);
+        final Database db2 = new Database().read(credentials,resource2);
 
         System.out.println("============= merge #1 ============");
         final List<String> messages = new ArrayList<>();
@@ -65,8 +64,8 @@ public class MergeTest extends TestCase
         final List<Credential> credentials = List.of(Credential.password("test".toCharArray()));
         final IResource resource1 = IResource.classpath("/merge_by_title1.kdbx");
         final IResource resource2 = IResource.classpath("/merge_by_title2.kdbx");
-        final Database db1 = new Database().load(credentials,resource1);
-        final Database db2 = new Database().load(credentials,resource2);
+        final Database db1 = new Database().read(credentials,resource1);
+        final Database db2 = new Database().read(credentials,resource2);
 
         System.out.println("============= merge #1 ============");
         final List<String> messages = new ArrayList<>();

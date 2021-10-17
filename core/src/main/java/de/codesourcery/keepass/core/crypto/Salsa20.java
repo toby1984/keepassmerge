@@ -15,7 +15,6 @@
  */
 package de.codesourcery.keepass.core.crypto;
 
-import de.codesourcery.keepass.core.fileformat.TypeLengthValue;
 import de.codesourcery.keepass.core.util.Logger;
 import de.codesourcery.keepass.core.util.LoggerFactory;
 import org.apache.commons.lang3.Validate;
@@ -36,19 +35,17 @@ public class Salsa20 implements IStreamCipher
     // IV taken from KeePassX source code
     public static final byte[] IV = new byte[] {(byte) 0xE8,0x30,0x09,0x4B,(byte) 0x97,0x20,0x5D,0x2A};
 
-    private StreamCipher salsa;
-    private ParametersWithIV params;
+    private StreamCipher cipher;
 
-    public void init(TypeLengthValue streamKey) {
+    public void init(byte[] streamKey, boolean encrypt) {
 
-        Validate.notNull(streamKey, "streamKey must not be null");
-        Validate.isTrue(streamKey.hasType(TypeLengthValue.Type.PROTECTED_STREAM_KEY));
+        Validate.isTrue(streamKey != null && streamKey.length > 0 , "streamKey must not be null or empty");
 
-        final byte[] key = Hash.sha256(streamKey.rawValue);
+        final byte[] key = Hash.sha256(streamKey);
         final KeyParameter keyparam = new KeyParameter(key);
-        params = new ParametersWithIV(keyparam, IV);
-        salsa = new Salsa20Engine();
-        salsa.init(false, params);
+        final ParametersWithIV params = new ParametersWithIV( keyparam, IV );
+        cipher = new Salsa20Engine();
+        cipher.init(encrypt, params );
     }
 
     /*
@@ -67,8 +64,7 @@ public class Salsa20 implements IStreamCipher
         Validate.notNull(input, "cipherText must not be null");
 
         final byte[] output = new byte[input.length];
-        salsa.processBytes(input, 0, input.length, output, 0);
-
+        cipher.processBytes(input, 0, input.length, output, 0);
         return output;
     }
 }

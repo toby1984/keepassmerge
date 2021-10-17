@@ -45,6 +45,10 @@ public class Entry
         this.uuid = uuid;
     }
 
+    public Optional<String> getPassword() {
+        return item( "Password" ).map( x -> (String) x.value );
+    }
+
     public UUID getUuid()
     {
         return uuid;

@@ -17,7 +17,16 @@ package de.codesourcery.keepass.core.util;
 
 import org.apache.commons.lang3.Validate;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.Arrays;
 
 public interface IResource
 {
@@ -137,6 +146,43 @@ public interface IResource
             }
         };
     }
+
+    final class ByteArrayResource implements IResource {
+
+        private final byte[] data;
+        private final String description;
+
+        public ByteArrayResource(byte[] data, String description)
+        {
+            Validate.notNull( data, "data must not be null" );
+            Validate.notBlank( description, "description must not be null or blank");
+            this.description = description;
+            this.data = data;
+        }
+
+        @Override
+        public InputStream createInputStream() throws IOException
+        {
+            return new ByteArrayInputStream( data );
+        }
+
+        @Override
+        public OutputStream createOutputStream(boolean overwrite) throws IOException
+        {
+            throw new UnsupportedOperationException( "Method createOutputStream() not supported" );
+        }
+
+        @Override
+        public boolean isSame(IResource other)
+        {
+            return other instanceof ByteArrayResource obj && Arrays.equals( this.data, obj.data );
+        }
+    }
+
+    static IResource inputStream(ByteArrayOutputStream bout, String description) {
+        return new ByteArrayResource( bout.toByteArray(), description );
+    }
+
     static IResource classpath(String path)
     {
         return new ClasspathResource(path);

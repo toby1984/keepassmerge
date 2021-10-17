@@ -23,6 +23,6 @@ package de.codesourcery.keepass.core;
 public class Constants
 {
     public static final boolean HEXDUMP_PAYLOAD = false;
-    public static final boolean DUMP_XML = true;
-    public static final boolean DEBUG_MERGING = true;
+    public static final boolean DUMP_XML = false;
+    public static final boolean DEBUG_MERGING = false;
 }

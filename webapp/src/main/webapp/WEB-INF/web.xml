@@ -45,34 +45,15 @@
     <web-resource-collection>
       <web-resource-name>Restricted HTTP methods</web-resource-name>
       <url-pattern>/*</url-pattern>
-      <http-method>OPTIONS</http-method>
-      <http-method>PUT</http-method>
-      <http-method>DELETE</http-method>
-      <http-method>TRACE</http-method>
-      <http-method>PROPFIND</http-method>
-      <http-method>PROPPATCH</http-method>
-      <http-method>MKCOL</http-method>
-      <http-method>COPY</http-method>
-      <http-method>MOVE</http-method>
-      <http-method>LOCK</http-method>
-      <http-method>UNLOCK</http-method>
-      <http-method>VERSION-CONTROL</http-method>
-      <http-method>REPORT</http-method>
-      <http-method>CHECKOUT</http-method>
-      <http-method>CHECKIN</http-method>
-      <http-method>UNCHECKOUT</http-method>
-      <http-method>MKWORKSPACE</http-method>
-      <http-method>UPDATE</http-method>
-      <http-method>LABEL</http-method>
-      <http-method>MERGE</http-method>
-      <http-method>BASELINE-CONTROL</http-method>
-      <http-method>MKACTIVITY</http-method>
-      <http-method>ORDERPATCH</http-method>
-      <http-method>ACL</http-method>
-      <http-method>PATCH</http-method>
-      <http-method>SEARCH</http-method>
+      <http-method-omission>OPTIONS</http-method-omission>
+      <http-method-omission>GET</http-method-omission>
+      <http-method-omission>HEAD</http-method-omission>
+      <http-method-omission>POST</http-method-omission>
     </web-resource-collection>
     <auth-constraint />
+    <user-data-constraint>
+      <transport-guarantee>CONFIDENTIAL</transport-guarantee>
+    </user-data-constraint>
   </security-constraint>
 
   <welcome-file-list>
@@ -83,19 +64,5 @@
     <tracking-mode>COOKIE</tracking-mode>
     <session-timeout>30</session-timeout>
   </session-config>
-
-<!--  <security-constraint>-->
-<!--    <web-resource-collection>-->
-<!--      <web-resource-name>SSL_SECURED_RESOURCE</web-resource-name>-->
-<!--      <url-pattern>/*</url-pattern>-->
-<!--      <http-method>GET</http-method>-->
-<!--      <http-method>PUT</http-method>-->
-<!--      <http-method>POST</http-method>-->
-<!--    </web-resource-collection>-->
-
-<!--    <user-data-constraint>-->
-<!--      <transport-guarantee>CONFIDENTIAL</transport-guarantee>-->
-<!--    </user-data-constraint>-->
-<!--  </security-constraint>-->
 
 </web-app>

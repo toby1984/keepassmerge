@@ -18,17 +18,27 @@ package de.codesourcery.keepass.core;
 import de.codesourcery.keepass.core.crypto.Credential;
 import de.codesourcery.keepass.core.fileformat.Database;
 import de.codesourcery.keepass.core.fileformat.XmlPayloadView;
-import de.codesourcery.keepass.core.util.*;
+import de.codesourcery.keepass.core.util.IResource;
+import de.codesourcery.keepass.core.util.Logger;
+import de.codesourcery.keepass.core.util.LoggerFactory;
+import de.codesourcery.keepass.core.util.Serializer;
+import de.codesourcery.keepass.core.util.XmlHelper;
 import org.apache.commons.lang3.StringUtils;
 import org.w3c.dom.Document;
 
 import javax.crypto.BadPaddingException;
-import java.io.*;
+import java.io.Console;
+import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public class Main
 {
@@ -36,10 +46,11 @@ public class Main
 
     private static void printHelp() {
         System.out.println();
-        System.out.println("Usage: [-v|--verbose] [-d|--debug] <command> [command arguments]");
-        System.out.println("\nSupported commands:\n\n");
+        System.out.println("Usage: [-v|--verbose] [-d|--debug] [-q|--quiet] <command> [command arguments]");
+        System.out.println("\nSupported commands are:\n\n");
+        System.out.println("analyze [--use-password] <file1> [<file2> ...] - prints the most interesting info about the file(s) as a one-liner\n");
         System.out.println("dumpxml [--decrypt-protected] <file> - dumps the XML payload\n");
-        System.out.println("combine [--auto-adjust-rounds <milliseconds>] <src1> <src2> <...> <destination file> - combine data from multiple files");
+        System.out.println("merge [--auto-adjust-rounds <milliseconds>] <src1> <src2> <...> - merge entries from multiple files (may OVERWRITE one of the files)");
         System.exit(1);
     }
 
@@ -56,6 +67,9 @@ public class Main
         if ( args.removeIf( x -> "-d".equals(x) || "--debug".equals(x) ) ) {
             LoggerFactory.currentLevel = Logger.Level.TRACE;
         }
+        if ( args.removeIf( x -> "-q".equals(x) || "--quiet".equals(x) ) ) {
+            LoggerFactory.currentLevel = Logger.Level.WARNING;
+        }
         LOG = LoggerFactory.getLogger(Main.class );
 
         if ( args.isEmpty() ) {
@@ -68,17 +82,52 @@ public class Main
             /* ***********
              * Dump xml
              * ***********/
-            case "dumpxml" -> {
+            case "analyze" ->
+                {
+                    final boolean usePassword = args.removeIf( "--use-password"::equals );
+                    final List<Credential> credentials = new ArrayList<>();
+                    if ( usePassword ) {
+                        final String description = args.size() == 1 ? args.get(0) : "<multiple files>";
+                        credentials.add( Credential.password( readPassword( description ) ) );
+                    }
+                    if ( args.size() < 1 ) {
+                        throw new RuntimeException("Invalid command line - you need to specify a .kdbx database file");
+                    }
+                    while ( ! args.isEmpty() )
+                    {
+                        final File f = new File( args.remove( 0 ) );
+                        Database db = null;
+                        final IResource resource = IResource.file( f );
+                        boolean passwordOk = false;
+                        try
+                        {
+                            db = Database.read( credentials, resource, credentials.isEmpty() );
+                            passwordOk = true;
+                        } catch(BadPaddingException ex) {
+                            db = Database.read( credentials, resource, true );
+                        }
+                        if ( db.getAppVersion().major() < 4 || (usePassword && passwordOk) )
+                        {
 
-                final boolean decrypt = args.removeIf( "--decrypt-protected"::equals);
-
-                if ( args.size() != 1 ) {
-                    throw new RuntimeException("Invalid command line - you need to specify a .kdbx database file");
+                            System.out.println( f.getPath() + ", file format: " + db.getAppVersion() + ", outer encryption: " +
+                                db.getOuterEncryptionAlgorithm() + " (KDF: "+db.outerHeader.getKDF()+", "+db.getTransformRounds()+" rounds), inner encryption: " + db.getInnerEncryptionAlgorithm() );
+                        } else {
+                            final String pwd = credentials.isEmpty() ? "<password needed>" : "<BAD PASSWORD>";
+                            System.out.println( f.getPath() + ", file format: " + db.getAppVersion() +
+                                ", outer encryption: " + db.getOuterEncryptionAlgorithm()+
+                                " (KDF: "+db.outerHeader.getKDF()+", "+db.getTransformRounds()+" rounds), inner encryption: "+pwd );
+                        }
+                    }
                 }
-
-                final Database db = load(IResource.file(new File(args.get(0))));
-                System.out.println(XmlHelper.toString(db.getDecryptedXML(decrypt)));
-            }
+            case "dumpxml" ->
+                {
+                    final boolean decrypt = args.removeIf( "--decrypt-protected"::equals);
+                    if ( args.size() != 1 ) {
+                        throw new RuntimeException("Invalid command line - you need to specify a .kdbx database file");
+                    }
+                    final Database db = load(IResource.file(new File(args.get(0))));
+                    System.out.println(XmlHelper.toString(db.getDecryptedXML(decrypt)));
+                }
             /* ***********
              * "Fix" files
              * This is just some hack to fix
@@ -86,104 +135,90 @@ public class Main
              * unencrypted even if <MemoryProtection/> would say
              * otherwise
              * ***********/
-            case "fix" -> {
-
-                if (args.size() != 2)
+            case "fix" ->
                 {
-                    System.err.println("Invalid command line, need source and target file");
-                    printHelp(); // never returns
-                }
-
-                final File srcFile = new File(args.get(0));
-                final File dstFile = new File(args.get(1));
-
-                if ( isSameFile(args.get(0), args.get(1) ) )
-                {
-                    throw new RuntimeException("Invalid command line, source and destination must be different");
-                }
-
-                final Database src = load(IResource.file(srcFile) );
-                final IResource res = IResource.file(dstFile);
-                final XmlPayloadView view = new XmlPayloadView(src);
-                final Document document = src.getDecryptedXML();
-                if ( view.maybeEncryptPayloadValues(document, LOG) )
-                {
-                    view.setXmlPayload(document);
-                    LOG.info("Writing fixed file to "+res);
-                    try (Serializer s = new Serializer(res.createOutputStream(false)))
+                    if (args.size() != 2)
                     {
-                        src.write( List.of(Credential.password(readPassword(res))), s, null, (level, msg, t) -> LOG.log(level, msg, t));
+                        System.err.println("Invalid command line, need source and target file");
+                        printHelp(); // never returns
                     }
-                } else {
-                    LOG.info("Nothing to fix.");
+
+                    final File srcFile = new File(args.get(0));
+                    final File dstFile = new File(args.get(1));
+
+                    if ( isSameFile(args.get(0), args.get(1) ) )
+                    {
+                        throw new RuntimeException("Invalid command line, source and destination must be different");
+                    }
+
+                    final Database src = load(IResource.file(srcFile) );
+                    final IResource res = IResource.file(dstFile);
+                    final XmlPayloadView view = new XmlPayloadView(src);
+                    final Document document = src.getDecryptedXML();
+                    if ( view.maybeEncryptPayloadValues(document, LOG) )
+                    {
+                        view.setXmlPayload(document);
+                        LOG.info("Writing fixed file to "+res);
+                        try (Serializer s = new Serializer(res.createOutputStream(false)))
+                        {
+                            src.write( List.of(Credential.password(readPassword(res.toString()))), s, null, (level, msg, t) -> LOG.log(level, msg, t));
+                        }
+                    } else {
+                        LOG.info("Nothing to fix.");
+                    }
                 }
-            }
             /* ***********
              * Merge files
              * ***********/
-            case "combine" -> {
-
-                Duration minKeyDerivationTime = null;
-                final int idx = args.indexOf("--auto-adjust-rounds");
-                if ( idx != -1 ) {
-                    if ( idx+1 >= args.size() ) {
-                        throw new RuntimeException("--auto-adjust-rounds requires an argument");
-                    }
-                    try {
-                        minKeyDerivationTime = Duration.ofMillis(Integer.parseInt( args.get(idx+1 ) ) );
-                        args.remove(idx);
-                        args.remove(idx);
-                    }
-                    catch(Exception e) {
-                        throw new RuntimeException("Invalid time in milliseconds: '"+args.get(idx+1));
-                    }
-                }
-
-                if (args.size() < 2)
+            case "merge" ->
                 {
-                    System.err.println("Invalid command line, need at least one source and one destination file");
-                    printHelp(); // never returns
-                }
-
-                final Map<String,Database> sources = new HashMap<>();
-                File destination = null;
-                for (int i = 0; i < args.size(); i++)
-                {
-                    final String file = args.get(i);
-                    final Path path = Paths.get(file);
-                    if ( sources.keySet().stream().anyMatch( x -> isSameFile(x, file ) ) ) {
-                        throw new RuntimeException("Mentioning the file '"+file+"' more than once is not allowed");
-                    }
-                    if ( i != args.size()-1 )
-                    {
-                        final Database db = load(IResource.file(new File(file)));
-                        sources.put(file, db);
-                    } else {
-                        destination = path.toFile();
-                        if (destination.exists())
-                        {
-                            throw new IOException("Destination file " + destination.getAbsolutePath() + " already exists.");
+                    Duration minKeyDerivationTime = null;
+                    final int idx = args.indexOf("--auto-adjust-rounds");
+                    if ( idx != -1 ) {
+                        if ( idx+1 >= args.size() ) {
+                            throw new RuntimeException("--auto-adjust-rounds requires an argument");
+                        }
+                        try {
+                            minKeyDerivationTime = Duration.ofMillis(Integer.parseInt( args.get(idx+1 ) ) );
+                            args.remove(idx);
+                            args.remove(idx);
+                        }
+                        catch(Exception e) {
+                            throw new RuntimeException("Invalid time in milliseconds: '"+args.get(idx+1));
                         }
                     }
-                }
-                final MergeHelper.MergeResult merged = MergeHelper.combine(sources.values(), (level, msg, t) -> {});
-                if ( merged.mergedDatabaseChanged() || ! merged.mergedDatabase().resource.isSame(IResource.file(destination) ) )
-                {
-                    final char[] password = readPassword(merged.mergedDatabase().resource);
 
-                    LOG.info("Writing result to " + destination.getAbsolutePath());
-                    try (Serializer out = new Serializer(new FileOutputStream(destination)))
+                    if (args.size() < 2)
                     {
-                        merged.mergedDatabase().write(List.of(Credential.password(password)), out, minKeyDerivationTime, (level, msg, t) -> {
-                            //
-                        });
+                        System.err.println("Invalid command line, need at least one source and one destination file");
+                        printHelp(); // never returns
+                    }
+
+                    final Map<String,Database> sources = new HashMap<>();
+                    for ( String file : args )
+                    {
+                        if ( sources.keySet().stream().anyMatch( x -> isSameFile( x, file ) ) )
+                        {
+                            throw new RuntimeException( "Mentioning the file '" + file + "' more than once is not allowed" );
+                        }
+                        sources.put( file, load( IResource.file( new File( file ) ) ) );
+                    }
+                    final MergeHelper.MergeResult merged = MergeHelper.combine(sources.values(), (level, msg, t) -> {});
+                    if ( merged.mergedDatabaseChanged() )
+                    {
+                        final char[] password = readPassword(merged.mergedDatabase().resource.toString());
+
+                        LOG.info("Writing result to " + merged.mergedDatabase().resource);
+                        try (Serializer out = new Serializer(merged.mergedDatabase().resource.createOutputStream( true )))
+                        {
+                            merged.mergedDatabase().write(List.of(Credential.password(password)), out, minKeyDerivationTime, (level, msg, t) -> {});
+                        }
+                    }
+                    else
+                    {
+                        LOG.info("No merging necessary, file "+merged.mergedDatabase().resource+" contains all the latest passwords.");
                     }
                 }
-                else
-                {
-                    LOG.info("Merging produced no changes, nothing written.");
-                }
-            }
             default -> printHelp();  // never returns
         }
     }
@@ -204,32 +239,44 @@ public class Main
         }
     }
 
-    private static Database load(IResource resource) throws IOException, BadPaddingException
-    {
-        return load(resource, List.of(Credential.password(readPassword(resource))));
+    private static Database load(IResource resource) throws IOException, BadPaddingException {
+        return load( resource, false );
     }
 
-    private static char[] readPassword(IResource file)
+    private static Database load(IResource resource, boolean doNotDecrypt) throws IOException, BadPaddingException
     {
+        return Database.read( List.of(Credential.password(readPassword(resource.toString()))), resource, doNotDecrypt );
+    }
+
+    private static Optional<char[]> readPasswordFromEnv() {
         String env = System.getProperties().getProperty("password");
         if (env != null)
         {
             LOG.info("Using existing password from -Dpassword: " + StringUtils.repeat('*', env.length()));
-            return env.toCharArray();
+            return Optional.of( env.toCharArray() );
         }
         env = System.getenv("KPX_PASSWORD");
         if ( env != null )
         {
             LOG.info("Using existing password from KPX_PASSWORD: " + StringUtils.repeat('*', env.length()));
-            return env.toCharArray();
+            return Optional.of( env.toCharArray() );
         }
+        return Optional.empty();
+    }
 
+    private static char[] readPassword(String description)
+    {
+        final Optional<char[]> envPwd = readPasswordFromEnv();
+        if ( envPwd.isPresent() ) {
+            return envPwd.get();
+        }
+        // try reading from console
         final Console console = System.console();
         if ( console == null ) {
             throw new RuntimeException("Neither -Dpassword nor KPX_PASSWORD are set and the shell is non-interactive.");
         }
 
-        final String msg = "Please enter the password for '"+file+"'";
+        final String msg = "Please enter the password for "+description;
 
         // hint: at least on my Linux system, only the first readPassword() call worked
         // properly, the next one would include some leading ANSI sequences (draw rectangular area stuff)
@@ -284,10 +331,4 @@ public class Main
         return Arrays.copyOfRange(input,start,end);
     }
 
-    public static Database load(IResource resource, List<Credential> credentials) throws IOException, BadPaddingException
-    {
-        final Database db = new Database();
-        db.load(credentials, resource);
-        return db;
-    }
 }

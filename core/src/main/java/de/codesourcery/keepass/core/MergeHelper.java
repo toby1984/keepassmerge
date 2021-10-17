@@ -23,8 +23,7 @@ import org.apache.commons.lang3.Validate;
 
 import java.util.Collection;
 import java.util.List;
-import java.util.Optional;
-import java.util.function.Consumer;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -52,43 +51,75 @@ public class MergeHelper
     public static MergeResult combine(Collection<Database> sources, Logger progressCallback)
     {
         Validate.notNull(sources, "sources must not be null");
+        Validate.isTrue( sources.size() >= 2, "Need at least 2 databases to merge");
 
-        final List<XmlPayloadView> views = sources.stream()
-                                               .map(XmlPayloadView::new)
-                                               .collect(Collectors.toList());
+        final List<XmlPayloadView> views = sources.stream().map(XmlPayloadView::new).collect(Collectors.toList());
+        views.forEach( view ->
+        {
+            progressCallback.info( "combine(): " + view.database.resource + " (" + view.database.getAppVersion() + ")" );
 
-        if ( views.size() < 2 ) {
-            throw new IllegalArgumentException("Need at least 2 databases to merge");
+            if ( Constants.DEBUG_MERGING ) {
+                System.out.println( "------------------------- " + view.database.resource + " (" + view.database.getAppVersion() + ") -----------------------" );
+                view.getGroups().stream().sorted((a,b)->a.name.compareToIgnoreCase( b.name ) ).forEach( group ->
+                {
+                    System.out.println( "\t+ Group: " + group.name );
+                    group.entries().sorted((a,b) -> a.getTitle().compareToIgnoreCase( b.getTitle() )).forEach( entry ->
+                    {
+                        System.out.println( "\t\t+ Entry: '" + entry.getTitle()+"' ("+entry.times.lastModificationTime+") - "+entry.uuid.toHex());
+                    });
+                } );
+            }
+        } );
+
+        // use database which has the most entries as merge target
+        final Set<Integer> versions = views.stream().map( x->x.database.outerHeader.appVersion.major() ).collect( Collectors.toSet());
+
+        // find the most recent file format major version and
+        // consider only those files as merge targets that have the same major version
+        // This is to avoid creating an incompatible file by accidentally things from
+        // different file format major versions (assumes the file format uses semantic versioning though)
+        final boolean differentAppVersions = versions.size() > 1;
+        final List<XmlPayloadView> candidates;
+        if ( differentAppVersions ) {
+            final int largestMajorVersion = versions.stream().max( Integer::compareTo ).get();
+            candidates = views.stream()
+                .filter( x -> x.database.outerHeader.appVersion.major() == largestMajorVersion )
+                .collect( Collectors.toList());
+        } else {
+            candidates = views;
         }
-
-        // use database which has the most entries
-        // as merge target
-        XmlPayloadView mostEntriesView = null;
+        XmlPayloadView mergeTarget = null;
         int mostEntries=0;
-        for ( XmlPayloadView view : views )
+        for ( XmlPayloadView view : candidates )
         {
             final int cnt = view.getEntryCount();
             progressCallback.info("File " + view.database.resource + " contains " + cnt + " entries.");
             LOG.info("File " + view.database.resource + " contains " + cnt + " entries.");
-            if ( mostEntriesView == null || cnt > mostEntries ) {
-                mostEntriesView = view;
+            if ( mergeTarget == null || cnt > mostEntries ) {
+                mergeTarget = view;
                 mostEntries = cnt;
             }
         }
-        progressCallback.info("Going to merge into file " + mostEntriesView.database.resource + " with " + mostEntries + " entries.");
-        LOG.info("Going to merge into file " + mostEntriesView.database.resource + " with " + mostEntries + " entries.");
-        views.remove(mostEntriesView);
-        final XmlPayloadView finalMostEntriesView=mostEntriesView;
+        final String msg = "Going to merge into file " + mergeTarget.database.resource + " (" + mergeTarget.database.getAppVersion() +
+            ") with " + mostEntries + " entries.";
+        if ( Constants.DEBUG_MERGING ) {
+            System.out.println( msg );
+        }
+        progressCallback.info( msg );
+        LOG.info(msg );
+
+        views.remove(mergeTarget);
+
         boolean dataChanged = false;
         for (XmlPayloadView v : views)
         {
-            dataChanged |= finalMostEntriesView.merge(v, progressCallback);
+            dataChanged |= mergeTarget.merge(v, progressCallback);
         }
         if ( dataChanged ) {
             progressCallback.info("Destination file has been updated");
         } else {
             progressCallback.info("Combining the files yielded no changes");
         }
-        return new MergeResult(mostEntriesView.database,dataChanged);
+        return new MergeResult(mergeTarget.database,dataChanged);
     }
 }

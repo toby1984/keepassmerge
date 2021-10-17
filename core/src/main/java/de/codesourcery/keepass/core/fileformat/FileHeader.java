@@ -15,9 +15,17 @@
  */
 package de.codesourcery.keepass.core.fileformat;
 
+import de.codesourcery.keepass.core.crypto.OuterEncryptionAlgorithm;
+import de.codesourcery.keepass.core.util.Serializer;
 import org.apache.commons.lang3.Validate;
 
-import java.util.*;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Optional;
 
 /**
  * KeePassX database file header.
@@ -66,25 +74,6 @@ public class FileHeader
         }
     }
 
-    public enum OuterEncryptionAlgorithm {
-        AES_CBC(new byte[] { 0x31, (byte) 0xc1, (byte) 0xf2, (byte) 0xe6, (byte) 0xbf,0x71,0x43,0x50, (byte) 0xbe,0x58,0x05,0x21,0x6a, (byte) 0xfc,0x5a, (byte) 0xff});
-
-        private final byte[] expected;
-
-        OuterEncryptionAlgorithm(byte[] expected)
-        {
-            this.expected = expected;
-        }
-
-        public final boolean matches(TypeLengthValue cipherId)
-        {
-            Validate.notNull(cipherId, "cipherId must not be null");
-            if ( ! cipherId.hasType(TypeLengthValue.Type.CIPHER_ID ) ) {
-                throw new IllegalStateException("Expected cipher ID TLV");
-            }
-            return Arrays.equals(this.expected, cipherId.rawValue);
-        }
-    }
     /*
      10) Depending on INNERRANDOMSTREAMID, set up the inner stream context.
       0 will mean all passwords in the XML will be in plain text,
@@ -96,7 +85,10 @@ public class FileHeader
     {
         NONE(0),
         ARC4_VARIANT(1),
-        SALSA20(2);
+        SALSA20(2),
+        CHACHA20(3),
+        ;
+
         public final int id;
 
         InnerEncryptionAlgorithm(int id)
@@ -110,18 +102,17 @@ public class FileHeader
     }
 
     public FileHeader.Version headerVersion;
-    public int appMinorVersion;
-    public int appMajorVersion;
+    public de.codesourcery.keepass.core.util.Version appVersion;
 
     // LinkedHashMap so we write out the headers in the same order we've read them
-    public final Map<TypeLengthValue.Type,TypeLengthValue> headerEntries = new LinkedHashMap<>();
+    public final Map<TLV.OuterHeaderType, TLV<TLV.OuterHeaderType>> headerEntries = new LinkedHashMap<>();
 
     public boolean isCompressedPayload() {
-        final TypeLengthValue flags = headerEntries.get(TypeLengthValue.Type.COMPRESSION_FLAGS);
+        final TLV<TLV.OuterHeaderType> flags = headerEntries.get( TLV.OuterHeaderType.COMPRESSION_FLAGS);
         return flags != null && (flags.numericValue().intValue() & 1 ) == 1;
     }
 
-    public void add(TypeLengthValue tlv)
+    public void add(TLV<TLV.OuterHeaderType> tlv)
     {
         Validate.notNull(tlv, "tlv must not be null");
         if ( headerEntries.containsKey(tlv.type)) {
@@ -130,29 +121,55 @@ public class FileHeader
         headerEntries.put(tlv.type, tlv);
     }
 
-    public OuterEncryptionAlgorithm getOuterEncryptionAlgorithm() {
-        final TypeLengthValue tlv = get(TypeLengthValue.Type.CIPHER_ID);
-        for ( OuterEncryptionAlgorithm enc : OuterEncryptionAlgorithm.values() ) {
-            if ( enc.matches(tlv) ) {
-                return enc;
-            }
-        }
-        throw new RuntimeException("Unsupported outer encryption cipher ID: " + TypeLengthValue.toHexString(tlv.rawValue));
-    }
-
-    public InnerEncryptionAlgorithm getInnerEncryptionAlgorithm() {
-        final TypeLengthValue tlv = get(TypeLengthValue.Type.INNER_RANDOM_STREAM_ID);
-        return InnerEncryptionAlgorithm.lookup( tlv.numericValue().intValue() )
-                   .orElseThrow(() -> new RuntimeException("Unhandled inner encryption type 0x" +
-                                                               TypeLengthValue.toHexString(tlv.rawValue)));
-    }
-
-    public TypeLengthValue get(TypeLengthValue.Type type) {
+    public TLV<TLV.OuterHeaderType> get(TLV.OuterHeaderType type) {
         Validate.notNull(type, "type must not be null");
-        final TypeLengthValue existing = headerEntries.get(type);
+        final TLV<TLV.OuterHeaderType> existing = headerEntries.get(type);
         if ( existing == null ) {
             throw new NoSuchElementException("File header has no entry of type "+type);
         }
         return existing;
+    }
+
+    public boolean isV3() {
+        return appVersion.hasMajorVersion( 3 );
+    }
+
+    public boolean isV4() {
+        return appVersion.hasMajorVersion( 4 );
+    }
+
+    public VariantDictionary getKdfParams()
+    {
+        if ( isV3() ) {
+            throw new UnsupportedOperationException( "KDF parameters are only available in KDBX >= 4.0" );
+        }
+        final byte[] kdfParams = get( TLV.OuterHeaderType.KDF_PARAMETERS ).rawValue;
+        try
+        {
+            return VariantDictionary.read( new Serializer( new ByteArrayInputStream( kdfParams ) ) );
+        }
+        catch( IOException e )
+        {
+            throw new RuntimeException( e );
+        }
+    }
+
+    public KeyDerivationFunctionId getKDF()
+    {
+        if ( isV3() ) {
+            return KeyDerivationFunctionId.AES_KDBX3;
+        }
+        return KeyDerivationFunctionId.lookup( getKdfParams().get( VariantDictionary.KDF_UUID ).getJavaValue( byte[].class ) );
+    }
+
+    /**
+     * Returns the algorithm used for the "outer" encryption of the payload (sensitive information inside the "payload"
+     * is protected with a different algorithm).
+     *
+     * @return
+     */
+    public OuterEncryptionAlgorithm getOuterEncryptionAlgorithm() {
+        final TLV<TLV.OuterHeaderType> tlv = get( TLV.OuterHeaderType.CIPHER_ID );
+        return OuterEncryptionAlgorithm.lookup( tlv.rawValue );
     }
 }

@@ -15,7 +15,7 @@
  */
 package de.codesourcery.keepass.core.crypto;
 
-import de.codesourcery.keepass.core.fileformat.TypeLengthValue;
+import de.codesourcery.keepass.core.fileformat.TLV;
 
 /**
  * Helper interface to abstract over the different symmetrical stream cipher implementations supported by KeePassX.
@@ -27,9 +27,10 @@ public interface IStreamCipher
     /**
      * Init cipher.
      *
-     * @param streamKey key to use, taken from file header (see {@link TypeLengthValue.Type#PROTECTED_STREAM_KEY})
+     * @param streamKey key to use, taken from file header (see {@link TLV.OuterHeaderType#PROTECTED_STREAM_KEY})
+     * @param encrypt whether to encrypt or decrypt
      */
-    void init(TypeLengthValue streamKey);
+    void init(byte[] streamKey, boolean encrypt);
 
     /**
      * Encrypt/decrypt data.

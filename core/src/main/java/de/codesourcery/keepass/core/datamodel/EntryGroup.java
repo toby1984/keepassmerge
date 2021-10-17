@@ -49,6 +49,10 @@ public class EntryGroup
         this.uuid = uuid;
     }
 
+    public int size() {
+        return entries.size();
+    }
+
     public void add(Entry e) {
         Validate.notNull(e, "e must not be null");
         if ( entries.containsKey(e.uuid) ) {

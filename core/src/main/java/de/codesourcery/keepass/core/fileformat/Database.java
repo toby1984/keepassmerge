@@ -16,24 +16,56 @@
 package de.codesourcery.keepass.core.fileformat;
 
 import de.codesourcery.keepass.core.Constants;
-import de.codesourcery.keepass.core.crypto.*;
+import de.codesourcery.keepass.core.crypto.ChaCha20;
+import de.codesourcery.keepass.core.crypto.CipherStreamFactory;
+import de.codesourcery.keepass.core.crypto.CompositeKey;
+import de.codesourcery.keepass.core.crypto.Credential;
+import de.codesourcery.keepass.core.crypto.HMACInputStream;
+import de.codesourcery.keepass.core.crypto.HMACOutputStream;
+import de.codesourcery.keepass.core.crypto.Hash;
+import de.codesourcery.keepass.core.crypto.IStreamCipher;
+import de.codesourcery.keepass.core.crypto.MasterKey;
+import de.codesourcery.keepass.core.crypto.OuterEncryptionAlgorithm;
+import de.codesourcery.keepass.core.crypto.Salsa20;
+import de.codesourcery.keepass.core.crypto.kdf.KeyDerivationFunction;
 import de.codesourcery.keepass.core.datamodel.MemoryProtection;
-import de.codesourcery.keepass.core.util.*;
+import de.codesourcery.keepass.core.util.IResource;
+import de.codesourcery.keepass.core.util.Logger;
+import de.codesourcery.keepass.core.util.LoggerFactory;
+import de.codesourcery.keepass.core.util.Misc;
+import de.codesourcery.keepass.core.util.Serializer;
+import de.codesourcery.keepass.core.util.Version;
+import de.codesourcery.keepass.core.util.XmlHelper;
 import org.apache.commons.lang3.Validate;
-import org.w3c.dom.*;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import javax.crypto.BadPaddingException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 public class Database
 {
-    private static Logger LOG = LoggerFactory.getLogger(Database.class );
+    private static final Logger LOG = LoggerFactory.getLogger(Database.class );
 
     private static volatile boolean warmupDone;
 
@@ -43,16 +75,41 @@ public class Database
     // https://gist.githubusercontent.com/msmuenchen/9318327/raw/60d16b3faf5c680dee2be9d8b5cbfe877706f004/gistfile1.txt
 
     public IResource resource;
-    public final FileHeader header = new FileHeader();
+    public final FileHeader outerHeader = new FileHeader();
+    public InnerHeader innerHeader = new InnerHeader(); // available in file format >= V4 only
     public final List<PayloadBlock> payloadBlocks =new ArrayList<>();
 
-    public Database load(List<Credential> credentials, IResource resource) throws IOException, BadPaddingException
+    public Database() {
+    }
+
+    public Database(IResource resource) {
+        Validate.notNull( resource, "resource must not be null" );
+        this.resource = resource;
+    }
+
+    public static Database read(List<Credential> credentials, IResource resource) throws IOException, BadPaddingException {
+        return read( credentials, resource, false );
+    }
+
+    /**
+     * Load database.
+     *
+     * @param credentials Credentials to use for decryption.
+     * @param resource resource to read database from
+     * @param doNotDecrypt set to <code>true</code> to return as soon as no more data can be decoded from the file without
+     *                     knowing the right master password.
+     * @return database
+     * @throws IOException
+     * @throws BadPaddingException thrown if decrypting the database failed because the provided credentials were wrong
+     */
+    public static Database read(List<Credential> credentials, IResource resource, boolean doNotDecrypt) throws IOException, BadPaddingException
     {
         LOG.info("Loading " + resource);
+        final Database result = new Database( resource );
         try ( final Serializer buffer = new Serializer( resource.createInputStream() ) ) {
-            this.resource = resource;
-            return load(credentials,buffer);
+            result.read( credentials, buffer, doNotDecrypt );
         }
+        return result;
     }
 
     public void write(List<Credential> credentials,
@@ -81,15 +138,21 @@ public class Database
             // warm-up JVM before we start measuring execution times
             if ( ! warmupDone )
             {
-                for (int i = 0; i < 5000; i++)
+                final KeyDerivationFunctionId kdf = outerHeader.getKDF();
+                long ts = System.currentTimeMillis();
+                deriveMasterKey(credentials, kdf, 100, true);
+                long loopTimeMillis = System.currentTimeMillis() - ts;
+                final int innerRounds = (int) Math.max(1, 1000/loopTimeMillis);
+
+                for (int i = 0; i < 5; i++)
                 {
-                    deriveMasterKey(credentials, 100, true);
+                    deriveMasterKey(credentials, kdf, innerRounds, true);
                 }
                 warmupDone = true;
             }
             while(true)
             {
-                final long iterationCount = header.get(TypeLengthValue.Type.TRANSFORM_ROUNDS).numericValue().longValue();
+                final long iterationCount = getTransformRounds();
                 if ( iterationCount < 1 ) { // maybe we overflowed ?
                     throw new RuntimeException("Iteration count should never be or become negative");
                 }
@@ -103,103 +166,203 @@ public class Database
                     break;
                 }
                 final String msg = "Key derivation with " + iterationCount + " rounds " +
-                                     "took " + elapsedMillis + " ms which is faster than the" +
-                                     " requested min. key derivation time of " + minKeyDerivationTime.toMillis() + " ms";
+                    "took " + elapsedMillis + " ms which is faster than the" +
+                    " requested min. key derivation time of " + minKeyDerivationTime.toMillis() + " ms";
                 progressLogger.debug(msg);
                 LOG.debug("doWrite(): " + msg);
-                float delta = minKeyDerivationTime.toMillis() - elapsedMillis;
-                float slowIncThreshold = 0.1f * minKeyDerivationTime.toMillis();
-                final float increment;
-                if ( elapsedMillis < 5 || delta <= slowIncThreshold ) {
-                    increment = (iterationCount*0.1f); // +10%
-                    final String msg2 = "[incremental] Increasing no. of rounds by " + increment;
-                    progressLogger.debug(msg2);
-                    LOG.debug("doWrite(): " + msg2);
-                } else {
-                    /*
-                     *         unknown iterations      current rounds * minKeyDerivationTime
-                     *                              =  ------------------
-                     *                                    elapsedTime
-                     */
-                    final float newValue =  ((iterationCount * minKeyDerivationTime.toMillis()) / elapsedMillis);
-                    increment = newValue - iterationCount;
-                    final String msg3 = "[non-incremental] Increasing no. of rounds by " + increment;
-                    progressLogger.debug(msg3);
-                    LOG.debug("doWrite(): " + msg3);
-                }
+                final float increment = iterationCount*0.01f;
                 final long newIterationCount = iterationCount + (long) increment;
                 if ( newIterationCount <= iterationCount ) {
                     throw new RuntimeException("Internal error, rounds counter must never be decreased here");
                 }
-                header.get(TypeLengthValue.Type.TRANSFORM_ROUNDS).setLongValue(newIterationCount);
+                setTransformRounds( newIterationCount );
             }
-            // update header checksum inside XML payload block
-            new XmlPayloadView(this).setHeaderHash(calculateHeaderHash());
+            // KDBX v3.1 stores the header checksum as part of the XML payload
+            // so we need to adjust it here as we might've changed the number of KDF rounds.
+
+            // KDBX v4+ does not store the header hash as part of the payload anymore
+            if ( getAppVersion().major() < 4 )
+            {
+                new XmlPayloadView( this ).setHeaderHash( calculateHeaderHash() );
+            }
         }
 
         // write magic
+        buffer.setWriteCopyToTmpBuffer( true );
         buffer.writeInt(MAGIC);
 
         // write header version
-        buffer.writeInt(header.headerVersion.magic);
+        buffer.writeInt( outerHeader.headerVersion.magic);
 
         // write app version
-        buffer.writeShort( header.appMinorVersion );
-        buffer.writeShort( header.appMajorVersion );
+        buffer.writeShort( outerHeader.appVersion.minor() );
+        buffer.writeShort( outerHeader.appVersion.major() );
 
         // write header entries
-        for ( TypeLengthValue tlv : header.headerEntries.values() ) {
-         tlv.write(buffer);
+        final Misc.ThrowingBiConsumer<TLV<TLV.OuterHeaderType>,Serializer> outerHeaderWriter;
+        if ( getAppVersion().major() < 4 ) {
+            outerHeaderWriter = TLV::writeV3;
+        } else {
+            outerHeaderWriter = TLV::writeV4;
+        }
+        for ( TLV<TLV.OuterHeaderType> tlv : outerHeader.headerEntries.values() ) {
+            outerHeaderWriter.consume( tlv, buffer );
         }
 
         if ( doHeaderHashCalculationOnly ) {
             return;
         }
 
-        // encrypt payload
-        final ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        try ( Serializer tmp = new Serializer(bos) )
+        byte[] hmacKey = new byte[0];
+        final MasterKey masterKey = deriveMasterKey(credentials,false);
+        if ( getAppVersion().major() >= 4 )
         {
-            bos.write(header.get(TypeLengthValue.Type.STREAM_START_BYTES).rawValue );
-            for (PayloadBlock block : payloadBlocks)
+            final byte[] headerData = buffer.getTmpBuffer();
+
+            /*
+    // hash header
+    QByteArray headerHash = CryptoHash::hash(headerData, CryptoHash::Sha256);
+
+    // write HMAC-authenticated cipher stream
+    QByteArray hmacKey = KeePass2::hmacKey(masterSeed, db->transformedDatabaseKey());
+    QByteArray headerHmac = CryptoHash::hmac(headerData, HmacBlockStream::getHmacKey(UINT64_MAX, hmacKey), CryptoHash::Sha256);
+
+    CHECK_RETURN_FALSE(writeData(device, headerHash));
+    CHECK_RETURN_FALSE(writeData(device, headerHmac));
+
+    QScopedPointer<HmacBlockStream> hmacBlockStream;
+    QScopedPointer<SymmetricCipherStream> cipherStream;
+
+    hmacBlockStream.reset(new HmacBlockStream(device, hmacKey));
+    if (!hmacBlockStream->open(QIODevice::WriteOnly)) {
+        raiseError(hmacBlockStream->errorString());
+        return false;
+    }
+             */
+
+            // write header hash (SHA-256)
+            buffer.writeBytes( calculateHeaderHash() );
+            hmacKey = hmacKey( this.outerHeader.get( TLV.OuterHeaderType.MASTER_SEED ), masterKey.transformedKey );
+
+            final byte[] headerHmac = calculateHMAC256( headerData,
+                HMACInputStream.getHMacKey( 0xffffffff_ffffffffL, hmacKey ) );
+
+            // store HMAC-256
+            buffer.writeBytes( headerHmac );
+        }
+        buffer.setWriteCopyToTmpBuffer( false );
+
+        // write XML payload part
+        final ByteArrayOutputStream xmlPayload = new ByteArrayOutputStream();
+        try ( Serializer tmp = new Serializer(xmlPayload) )
+        {
+            if ( getAppVersion().major() < 4 )
             {
-                block.write(tmp);
+                xmlPayload.write( outerHeader.get( TLV.OuterHeaderType.STREAM_START_BYTES ).rawValue );
+                for (PayloadBlock block : payloadBlocks)
+                {
+                    block.write(tmp);
+                }
+            } else {
+                final List<PayloadBlock> xml = payloadBlocks.stream().filter( block -> block.blockId == PayloadBlock.BLOCK_ID_PAYLOAD )
+                    .collect( Collectors.toList() );
+                if ( xml.size() != 1 ) {
+                    throw new IllegalStateException( "Expected exactly one payload block, got " + xml.size() );
+                }
+                tmp.writeBytes( xml.get( 0 ).getDecompressedPayload() );
             }
         }
-        final MasterKey masterKey = deriveMasterKey(credentials,false);
-        final byte[] data = bos.toByteArray();
-        final byte[] encPayload = masterKey.encrypt(data,header.get(TypeLengthValue.Type.ENCRYPTION_IV).rawValue);
 
-        // write encrypted payload
-        buffer.writeBytes(encPayload);
+        byte[] payload = xmlPayload.toByteArray();
+        final byte[] encryptionIV = outerHeader.get( TLV.OuterHeaderType.ENCRYPTION_IV ).rawValue;
+
+        final Misc.IOFunction<OutputStream, OutputStream> encryptedOutputStream =
+            toWrap -> CipherStreamFactory.encryptOutputStream( outerHeader.getOuterEncryptionAlgorithm(), masterKey, encryptionIV, toWrap );
+
+        if ( getAppVersion().major() >= 4 )
+        {
+            // KDBX v4 -> payload is inner header followed by XML
+            final ByteArrayOutputStream innerHeaders = new ByteArrayOutputStream();
+            final Serializer innerHeaderSerializer = new Serializer( innerHeaders );
+            if ( getAppVersion().major() >= 4 ) {
+                for ( final TLV<TLV.InnerHeaderType> tlv : innerHeader.entries )
+                {
+                    tlv.writeV4( innerHeaderSerializer );
+                }
+            }
+            payload = Misc.concat( innerHeaders.toByteArray(), payload );
+
+            // 3. wrap with HMAC output stream
+            buffer.wrapOutputStream( hmacKey, HMACOutputStream::new );
+
+            // 2. encrypt
+            buffer.wrapOutputStream( encryptedOutputStream );
+
+            // 1. compress is necessary
+            if ( outerHeader.isCompressedPayload() )
+            {
+                buffer.wrapOutputStream( GZIPOutputStream::new );
+            }
+        } else {
+            // encrypt
+            buffer.wrapOutputStream( encryptedOutputStream );
+        }
+        buffer.writeBytes( payload );
     }
 
-    private MasterKey deriveMasterKey(List<Credential> credentials,boolean isBenchmark) {
-        return deriveMasterKey(credentials,header.get(TypeLengthValue.Type.TRANSFORM_ROUNDS).numericValue().longValue(),isBenchmark);
+    private MasterKey deriveMasterKey(List<Credential> credentials,boolean isBenchmark)
+    {
+        Validate.isTrue(!credentials.isEmpty(),"No credentials given?");
+        final long rounds = getTransformRounds();
+        final KeyDerivationFunctionId kdf = outerHeader.getKDF();
+        return deriveMasterKey(credentials, kdf, rounds,isBenchmark);
     }
 
-    private MasterKey deriveMasterKey(List<Credential> credentials, long rounds, boolean isBenchmark) {
+    private MasterKey deriveMasterKey(List<Credential> credentials, KeyDerivationFunctionId kdf, long rounds, boolean isBenchmark)
+    {
         final CompositeKey compositeKey = CompositeKey.create(credentials);
-        return MasterKey.create(
-            compositeKey,
-            header.get(TypeLengthValue.Type.TRANSFORM_SEED),
-            header.get(TypeLengthValue.Type.MASTER_SEED),
-            rounds,
-            isBenchmark
-        );
+        final TLV<TLV.OuterHeaderType> masterSeed = outerHeader.get( TLV.OuterHeaderType.MASTER_SEED );
+
+        VariantDictionary dictionary = new VariantDictionary();
+        final byte[] transformSeed;
+        if ( outerHeader.isV3() )
+        {
+            transformSeed = outerHeader.get( TLV.OuterHeaderType.TRANSFORM_SEED ).rawValue;
+        } else {
+            dictionary = outerHeader.getKdfParams();
+            transformSeed = switch( kdf ) {
+                case AES_KDBX3, AES_KDBX4 -> dictionary.get( VariantDictionary.KDF_AES_SEED ).getJavaValue( byte[].class );
+                case ARGON2D -> masterSeed.rawValue; // not used by my KDF implementation
+                default -> throw new IllegalStateException( "KDF not implemented: " + kdf );
+            };
+        }
+        final KeyDerivationFunction kdfFunc = KeyDerivationFunction.create( kdf );
+        kdfFunc.init( rounds, transformSeed, isBenchmark, dictionary );
+        byte[] kdfResult = kdfFunc.transform( compositeKey.data );
+
+        // 5. concatenate the Master Seed to the transformed_key (transformed_key = concat(Master Seed, transformed_key) ),
+        final byte[] transformedKey = Misc.concat( masterSeed.rawValue, kdfResult );
+
+        // 6. hash (with SHA-256) the transformed_key to get the final master key (final_master_key = sha256(transformed_key) ).
+        final byte[] finalKey = Hash.sha256(transformedKey);
+
+        // You now have the final master key, you can finally decrypt the database
+        // (the part of the file after the header for .kdb, and after the End of Header field for .kdbx).
+        return new MasterKey( outerHeader.getOuterEncryptionAlgorithm(), finalKey, kdfResult );
     }
 
-    private Database load(List<Credential> credentials, Serializer buffer) throws IOException, BadPaddingException
+    private void read(List<Credential> credentials, Serializer buffer, boolean doNotDecrypt) throws IOException, BadPaddingException
     {
         Validate.notNull(credentials, "credentials must not be null");
-        Validate.isTrue(!credentials.isEmpty(),"No credentials given?");
         Validate.notNull(resource, "resource must not be null");
+
+        buffer.setWriteCopyToTmpBuffer( true );
 
         // magic
         int value = buffer.readInt("4 bytes signature");
 
         if ( value != MAGIC ) {
-            throw new IOException("Not a valid KeePassX file (invalid magic 0x"+Integer.toHexString(value)+")");
+            throw new IOException("Not a valid KeePassX file (invalid magic "+Integer.toHexString(value)+")");
         }
 
         // file header version
@@ -208,39 +371,174 @@ public class Database
         if ( version.isEmpty() || ! version.get().isKeepass2() ) {
             throw new IOException("Unsupported file version 0x"+Integer.toHexString(value));
         }
-        this.header.headerVersion = version.get();
+        this.outerHeader.headerVersion = version.get();
+        LOG.info("Header version: "+this.outerHeader.headerVersion);
 
         // app version
-        this.header.appMinorVersion = buffer.readShort("app minor version");
-        this.header.appMajorVersion = buffer.readShort("app major version");
+        final int appMinorVersion = buffer.readShort("app minor version");
+        final int appMajorVersion = buffer.readShort("app major version");
+        this.outerHeader.appVersion = new Version( appMajorVersion, appMinorVersion );
 
-        LOG.debug("App version "+this.header.appMajorVersion+"."+this.header.appMinorVersion);
+        LOG.info("App version: "+this.outerHeader.appVersion);
 
         // read header entries
         while ( true ) {
-            final TypeLengthValue tlv = TypeLengthValue.read(buffer);
-            this.header.add(tlv);
-            if ( tlv.hasType(TypeLengthValue.Type.END_OF_HEADER ) ) {
+            final TLV<TLV.OuterHeaderType> tlv;
+            if ( this.outerHeader.isV4() ) {
+                // Note on V4: TLV structure now uses 4 bytes instead of 2 bytes (V3.1) to store length values
+                // see https://keepass.info/help/kb/kdbx_4.html#innerhdr
+                tlv = TLV.readV4( buffer , TLV.OuterHeaderType::lookup, TLV.OuterHeaderType.class );
+            }
+            else
+            {
+                tlv = TLV.read( buffer , TLV.OuterHeaderType::lookup, TLV.OuterHeaderType.class );
+            }
+            LOG.debug( "Found header: " + tlv );
+            this.outerHeader.add(tlv);
+            if ( tlv.hasType( TLV.OuterHeaderType.END_OF_HEADER ) ) {
                 break;
             }
         }
 
-        final FileHeader.OuterEncryptionAlgorithm outerEnc = header.getOuterEncryptionAlgorithm();
-        LOG.debug("Outer encryption: "+ outerEnc);
-        LOG.debug("Inner encryption: "+header.getInnerEncryptionAlgorithm());
+        LOG.debug("Compressed payload: "+ this.outerHeader.isCompressedPayload() );
+        LOG.debug("Outer encryption: "+ this.outerHeader.getOuterEncryptionAlgorithm());
+        LOG.debug("Key Derivation Function: " + this.outerHeader.getKDF() );
 
-        LOG.trace("Payload starts at offset "+buffer.offset());
+        // sanity check
+        if ( this.outerHeader.isV4() ) {
+            final boolean foundV3OuterHeaderFields = this.outerHeader.headerEntries.keySet().stream().map( x -> switch( x ) {
+                case PROTECTED_STREAM_KEY, TRANSFORM_ROUNDS, TRANSFORM_SEED, STREAM_START_BYTES, INNER_RANDOM_STREAM_ID -> true;
+                default -> false;
+            } ).reduce( false, (a, b) -> a|b );
+            if ( foundV3OuterHeaderFields )
+            {
+                throw new RuntimeException( "Legacy header fields found in KDBX4 file ?" );
+            }
+        }
+
+        byte[] hmacKey = null;
+        final Supplier<MasterKey> finalKey = new Supplier<>()
+        {
+            private MasterKey key;
+            @Override
+            public MasterKey get()
+            {
+                if ( key == null )
+                {
+                    key = deriveMasterKey( credentials, false );
+                }
+                return key;
+            }
+        };
+        if ( this.outerHeader.isV4() ) {
+            // Note on V4: Directly after the KDBX 4 header, a (non-encrypted) SHA-256 hash of the header is stored now,
+            // followed by the HMAC-SHA-256
+            // This allows the detection of unintentional corruptions of the header (without knowing the master key).
+            // The hash has no effect on the security.
+            /*
+In KDBX 4, header data is authenticated using HMAC-SHA-256.
+Up to KDBX 3.1, header data was authenticated using a SHA-256 hash stored in the encrypted part of the database file.
+The HMAC-SHA-256 approach used in KDBX 4 has various advantages. One advantage is that KeePass can verify the header
+before trying to decrypt the remaining part, which prevents trying to decrypt incorrect data.
+
+In KDBX 4, the HeaderHash element in the XML part is now obsolete and is not stored anymore. The new header authentication using HMAC-SHA-256 is mandatory.
+Directly after the header, a (non-encrypted) SHA-256 hash of the header is stored (which allows the detection of unintentional corruptions,
+without knowing the master key). Directly after the hash, the HMAC-SHA-256 value of the header is stored.
+             */
+            final byte[] headerData = buffer.getTmpBuffer();
+
+            final byte[] actualSha256;
+            try
+            {
+                actualSha256 = MessageDigest.getInstance( "SHA256" ).digest( headerData );
+            }
+            catch( NoSuchAlgorithmException e )
+            {
+                throw new RuntimeException( e );
+            }
+            final byte[] expectedSha256 = buffer.readBytes(256/8, "Expected SHA-256");
+            LOG.debug( "SHA-256: " + Misc.toHexString( expectedSha256, "" ) );
+            LOG.trace( "Actual SHA-256 header hash: " + Misc.toHexString( actualSha256, "") );
+            if ( ! Arrays.equals( actualSha256, expectedSha256 ) ) {
+                throw new RuntimeException( "Outer header data corrupted, SHA-256 hashes do not match" );
+            }
+
+            if ( doNotDecrypt ) {
+                return;
+            }
+
+            // read HMAC-SHA-256
+            final byte[] expectedHeaderHMAC = buffer.readBytes( 256 / 8, "Expected HMAC-SHA-256" );
+            LOG.debug( "HMAC SHA-256: " + Misc.toHexString( expectedHeaderHMAC, "" ) );
+
+            // QByteArray hmacKey = KeePass2::hmacKey(m_masterSeed, db->transformedDatabaseKey())
+            hmacKey = hmacKey( this.outerHeader.get( TLV.OuterHeaderType.MASTER_SEED ), finalKey.get().transformedKey );
+
+            // QByteArray hmacKey2 = HmacBlockStream::getHmacKey(UINT64_MAX, hmacKey);
+            final byte[] hmacKey2 = HMACInputStream.getHMacKey( 0xffffffff_ffffffffL, hmacKey );
+
+            // QByteArray actualHeaderHMAC = CryptoHash::hmac(headerData, key, CryptoHash::Sha256 )
+            final byte[] actualHeaderHMAC = calculateHMAC256( headerData, hmacKey2 );
+            /*
+             * if (headerHmac != actualHeaderHMAC)) {
+             *     raiseError(tr("Invalid credentials were provided, please try again.\n"
+             *                   "If this reoccurs, then your database file may be corrupt.") + " " + tr("(HMAC mismatch)"));
+             *     return false;
+             * }
+             */
+            if ( ! Arrays.equals( expectedHeaderHMAC, actualHeaderHMAC ) ) {
+                LOG.error( "HMAC error - expected: " + Misc.toHexString( expectedHeaderHMAC ) );
+                LOG.error( "HMAC error - actual  : " + Misc.toHexString( actualHeaderHMAC ) );
+                LOG.error( "HMAC error - length : expected=" + expectedHeaderHMAC.length + ", actual=" + actualHeaderHMAC.length );
+                // hint: web application expects a BadPaddingException to be thrown if credentials are invalid
+                throw new BadPaddingException( "Invalid credentials were provided, please try again.\nIf this reoccurs, then your database file may be corrupt." );
+            }
+        }
+        buffer.setWriteCopyToTmpBuffer( false );
+
+        if ( doNotDecrypt ) {
+            return;
+        }
+
+        // Note on V4: The inner random stream cipher ID and key (to support process memory protection)
+        // are now stored in the inner header instead of in the outer header.
+        LOG.trace("XML payload starts at offset "+buffer.offset());
 
         // decrypt payload
-        final MasterKey masterKey = deriveMasterKey(credentials,false);
+        final byte[] encryptionIV = outerHeader.get( TLV.OuterHeaderType.ENCRYPTION_IV ).rawValue;
 
-        final byte[] data = buffer.readAll("payload");
-        final byte[] payloadBuffer;
-        payloadBuffer = masterKey.decrypt(data,header.get(TypeLengthValue.Type.ENCRYPTION_IV).rawValue);
+        if ( this.outerHeader.isV4() )
+        {
+            // Input streams get applied during read() in the following
+            // order:
+            // 1. read HMAC input stream, verify HMAC and strip HMAC and block length information from input
+            // 2. Decrypt data
+            // 3. Decompress data if necessary
+            buffer.wrapInputStream( hmacKey, HMACInputStream::new );
+            buffer.wrapInputStream( toWrap -> CipherStreamFactory.decryptInputStream( outerHeader.getOuterEncryptionAlgorithm(), finalKey.get(), encryptionIV, toWrap ) );
+            if ( this.outerHeader.isCompressedPayload() ) {
+                buffer.wrapInputStream( toWrap -> {
+                    try {return new GZIPInputStream(toWrap);} catch( IOException e ) {throw new RuntimeException( e );}
+                } );
+            }
+            this.innerHeader.read( buffer );
+        }
+
+        LOG.debug( "Inner encryption: " + getInnerEncryptionAlgorithm() );
+
+        final byte[] encryptedPayload = buffer.readAll("payload");
+
+        final byte[] decryptedPayload;
+        if ( this.outerHeader.isV3() )
+        {
+            decryptedPayload = finalKey.get().decrypt( encryptedPayload, encryptionIV );
+        } else {
+            decryptedPayload = encryptedPayload;
+        }
 
         if ( Constants.HEXDUMP_PAYLOAD )
         {
-            LOG.trace("*** payload ***\n" + Serializer.hexdump(payloadBuffer));
+            LOG.trace("*** payload ***\n" + Serializer.hexdump(decryptedPayload));
         }
 
         /*
@@ -251,20 +549,23 @@ public class Database
 dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the last data in the file.
          */
 
-        // verify that decryption worked correctly
-        final byte[] expected = header.get(TypeLengthValue.Type.STREAM_START_BYTES).rawValue;
-        final byte[] actual = new byte[expected.length];
-        System.arraycopy(payloadBuffer,0,actual,0,expected.length);
+        // check that decryption worked correctly (<V4 only as >= V4 already uses HMACStream to verify the ciphertext)
+        byte[] expected = null;
+        if ( outerHeader.isV3() )
+        {
+            expected = outerHeader.get( TLV.OuterHeaderType.STREAM_START_BYTES ).rawValue;
+            final byte[] actual = new byte[expected.length];
+            System.arraycopy(decryptedPayload,0,actual,0,expected.length);
 
-        for ( int i = 0 ; i < actual.length ; i++ ) {
-            if ( expected[i] != actual[i] ) {
-                throw new RuntimeException("Bad master key, decryption failed at payload byte "+i+"," +
-                                               " expected 0x"+Integer.toHexString(expected[i])+
-                                               " but got 0x"+Integer.toHexString(actual[i]));
+            for ( int i = 0 ; i < actual.length ; i++ ) {
+                if ( expected[i] != actual[i] ) {
+                    throw new RuntimeException("Bad master key, decryption failed at payload byte "+i+"," +
+                        " expected 0x"+Integer.toHexString(expected[i])+
+                        " but got 0x"+Integer.toHexString(actual[i]));
+                }
             }
         }
 
-        // decrypt payload area
         /*
 6) Payload area (from end of header until file end).
 6.1) BYTE[len(STREAMSTARTBYTES)] BYTE string. When payload area is successfully decrypted, this area MUST equal STREAMSTARTBYTES. Normally the length is 32 bytes.
@@ -286,44 +587,62 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
 
 14) Optionally, check the header for integrity by taking sha256() hash of the whole header (up to, but excluding, the payload start bytes) and compare it with the base64_encode()d hash in the XML node <HeaderHash>(...)</HeaderHash>.
          */
-        final ByteArrayInputStream bis = new ByteArrayInputStream(payloadBuffer);
-        // skip magic at start of payload
-        bis.readNBytes(expected.length);
 
-        try ( Serializer helper = new Serializer(bis))
+        final Serializer payloadReader = new Serializer( new ByteArrayInputStream( decryptedPayload ) );
+        byte[] xmlPayload;
+        xmlPayload = payloadReader.readAll( "XML payload" );
+
+        final ByteArrayInputStream bis = new ByteArrayInputStream(xmlPayload);
+        if ( outerHeader.isV3() )
         {
-            PayloadBlock lastBlock = null;
-            do
+            // skip magic at start of payload
+            bis.readNBytes( expected.length );
+
+            try ( Serializer helper = new Serializer( bis ) )
             {
-                final int blockId = helper.readInt("payload block ID");
-                final byte[] blockHash = helper.readBytes(32, "payload block hash");
-                final int blockSize = helper.readInt("payload block size");
-                final byte[] blockData = blockSize > 0 ? helper.readBytes(blockSize, "payload block data") : new byte[0];
+                PayloadBlock lastBlock;
+                do
+                {
+                    final int blockId = helper.readInt( "payload block ID" );
+                    final byte[] blockHash = helper.readBytes( 32, "payload block hash" );
+                    final int blockSize = helper.readInt( "payload block size" );
+                    final byte[] blockData = blockSize > 0 ? helper.readBytes( blockSize, "payload block data" ) : new byte[0];
 
-                LOG.trace("Got payload block of type 0x" + Integer.toHexString(blockId) + ", length=" + blockSize
-                                       + ", hash=" + TypeLengthValue.toHexString(blockHash));
-                lastBlock = new PayloadBlock(blockId, blockHash, blockData, header.isCompressedPayload());
-                if ( ! lastBlock.checksumOk() ) {
-                    throw new RuntimeException("Checksum failure on block "+lastBlock);
-                }
-                this.payloadBlocks.add(lastBlock);
-            } while ( lastBlock.blockId != PayloadBlock.BLOCK_ID_END_OF_PAYLOAD );
-        }
+                    LOG.trace( "Got payload block of type 0x" + Integer.toHexString( blockId ) + ", length=" + blockSize
+                        + ", hash=" + Misc.toHexString( blockHash ) );
+                    lastBlock = new PayloadBlock( blockId, blockHash, blockData, outerHeader.isCompressedPayload() );
+                    if ( !lastBlock.checksumOk() )
+                    {
+                        throw new RuntimeException( "Checksum failure on block " + lastBlock );
+                    }
+                    this.payloadBlocks.add( lastBlock );
+                } while (lastBlock.blockId != PayloadBlock.BLOCK_ID_END_OF_PAYLOAD);
+            }
 
-        // validate header hash
-        final byte[] actualHeaderHash = calculateHeaderHash();
-        final byte[] expectedHeaderHash = new XmlPayloadView(this).getHeaderHash();
-        if ( ! Arrays.equals(actualHeaderHash, expectedHeaderHash ) ) {
-            final String msg = "Header hash inside payload (" + TypeLengthValue.toHexString(expectedHeaderHash) + ") does " +
-                                   "not match actual header hash (" + TypeLengthValue.toHexString(actualHeaderHash) + ")";
-            LOG.error(msg);
-            throw new RuntimeException(msg);
+            // validate header hash
+            final byte[] actualHeaderHash = calculateHeaderHash();
+            final byte[] expectedHeaderHash = new XmlPayloadView( this ).getHeaderHash();
+            if ( !Arrays.equals( actualHeaderHash, expectedHeaderHash ) )
+            {
+                final String msg = "Header hash inside payload (" + Misc.toHexString( expectedHeaderHash ) + ") does " +
+                    "not match actual header hash (" + Misc.toHexString( actualHeaderHash ) + ")";
+                LOG.error( msg );
+                throw new RuntimeException( msg );
+            }
+        } else {
+            // create fake PayloadBlock entries so existing code (especially KDBX 3.1 <-> KDBX 4.x conversion) keeps working
+            final PayloadBlock block = new PayloadBlock( PayloadBlock.BLOCK_ID_PAYLOAD, new byte[0], new byte[0], false );
+            block.setData( bis.readAllBytes() );
+            this.payloadBlocks.add( block );
+            final PayloadBlock e = new PayloadBlock( PayloadBlock.BLOCK_ID_END_OF_PAYLOAD, new byte[0], new byte[0], false );
+            e.setData( new byte [0] ); // necessary so block hash is correct
+            this.payloadBlocks.add( e );
+
         }
 
         if ( Constants.DUMP_XML ) {
-            LOG.trace(XmlHelper.toString(getDecryptedXML()));
+            LOG.info(XmlHelper.toString( getDecryptedXML()));
         }
-        return this;
     }
 
     public Optional<PayloadBlock> getBlock(int blockId) {
@@ -332,9 +651,9 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
 
     /**
      * Returns the XML payload with any protected payload values decrypted.
-     * 
+     *
      * @return
-     * @see #getDecryptedXML(boolean) 
+     * @see #getDecryptedXML(boolean)
      */
     public Document getDecryptedXML()
     {
@@ -353,21 +672,25 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
     }
 
     public boolean isInnerEncryptionEnabled() {
-        final FileHeader.InnerEncryptionAlgorithm algo = header.getInnerEncryptionAlgorithm();
+        final FileHeader.InnerEncryptionAlgorithm algo = getInnerEncryptionAlgorithm();
         return ( algo != FileHeader.InnerEncryptionAlgorithm.NONE );
     }
 
-    public Function<byte[],byte[]> createStreamCipher() {
+    public Function<byte[],byte[]> createStreamCipher(boolean encrypt) {
         if ( ! isInnerEncryptionEnabled() ) {
             return in -> in;
         }
-        final FileHeader.InnerEncryptionAlgorithm algo = header.getInnerEncryptionAlgorithm();
-        // TODO: Add support for other algorithms
+        final FileHeader.InnerEncryptionAlgorithm algo = getInnerEncryptionAlgorithm();
         final IStreamCipher cipher = switch(algo) {
             case SALSA20 -> new Salsa20();
+            case CHACHA20 -> new ChaCha20();
             default -> throw new RuntimeException("Unsupported algorith "+algo);
         };
-        cipher.init(header.get(TypeLengthValue.Type.PROTECTED_STREAM_KEY));
+        if ( outerHeader.isV3() ) {
+            cipher.init( outerHeader.get( TLV.OuterHeaderType.PROTECTED_STREAM_KEY).rawValue, encrypt );
+        } else {
+            cipher.init( innerHeader.get( TLV.InnerHeaderType.INNER_RANDOM_STREAM_KEY).rawValue, encrypt );
+        }
         return cipher::process;
     }
 
@@ -386,6 +709,37 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
         return Hash.sha256(header.toByteArray());
     }
 
+    /*
+QByteArray KeePass2::hmacKey(const QByteArray& masterSeed, const QByteArray& transformedMasterKey)
+{
+    CryptoHash hmacKeyHash(CryptoHash::Sha512);
+    hmacKeyHash.addData(masterSeed);
+    hmacKeyHash.addData(transformedMasterKey);
+    hmacKeyHash.addData(QByteArray(1, '\x01'));
+    return hmacKeyHash.result();
+}
+     */
+    private static byte[] hmacKey(TLV<TLV.OuterHeaderType> masterSeed, byte[] transformedMasterKey)
+    {
+        Validate.notNull( masterSeed, "masterSeed must not be null" );
+        Validate.notNull( transformedMasterKey, "transformedKey must not be null" );
+
+        if ( ! masterSeed.hasType( TLV.OuterHeaderType.MASTER_SEED ) ) {
+            throw new IllegalArgumentException( "Wrong master seed header entry" );
+        }
+        if ( masterSeed.rawValue.length != 32 ) {
+            throw new IllegalStateException( "Master seed should have 32 bytes" );
+        }
+        final Hash hmacKeyHash = Hash.sha512();
+        hmacKeyHash.update(masterSeed.rawValue);
+        hmacKeyHash.update(transformedMasterKey);
+        return hmacKeyHash.finish( new byte[]{ 0x01 } ); // the weird 0x01 bytes comes from the original CS source...what's this for ?
+    }
+
+    private static byte[] calculateHMAC256(byte[] data, byte[] hmacKey) {
+        return Hash.hmac256( hmacKey ).finish( data );
+    }
+
     public class InnerEncryptionProcessor
     {
         private final Function<byte[],byte[]> cipher;
@@ -393,7 +747,7 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
         private MemoryProtection memoryProtection;
 
         public InnerEncryptionProcessor(boolean encrypt) {
-            this.cipher = createStreamCipher();
+            this.cipher = createStreamCipher(encrypt);
             this.encrypt = encrypt;
         }
 
@@ -434,15 +788,23 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
 
         private Node maybeDecrypt(Document resultDoc, Node valueNode)
         {
-            if (valueNode.getNodeType() != Node.ELEMENT_NODE || !"Value".equals(valueNode.getNodeName()))
+            if (valueNode.getNodeType() != Node.ELEMENT_NODE || ! "Value".equals(valueNode.getNodeName()))
             {
                 return decryptRecursively(resultDoc, valueNode);
             }
             final String key = XmlHelper.directChild(valueNode.getParentNode(),"Key").getTextContent();
-            final boolean supportsEncryption =
-                memoryProtection.isProtectionEnabled( MemoryProtection.ProtectedItem.lookupByKeyName(key) );
-            final String attrValue = ((Element) valueNode).getAttribute( XmlPayloadView.ATTR_IS_PROTECTED );
-            final boolean isProtected = XmlPayloadView.boolFromString(attrValue);
+            final Optional<MemoryProtection.ProtectedItem> protectedItem = MemoryProtection.ProtectedItem.lookupByKeyName( key );
+            final boolean supportsEncryption;
+            final boolean isProtected;
+            if ( protectedItem.isPresent() )
+            {
+                supportsEncryption = memoryProtection.isProtectionEnabled( protectedItem.get() );
+                final String attrValue = ((Element) valueNode).getAttribute( XmlPayloadView.ATTR_IS_PROTECTED );
+                isProtected = XmlPayloadView.boolFromString( attrValue );
+            } else {
+                supportsEncryption = false;
+                isProtected = false;
+            }
             if (encrypt == isProtected || (encrypt && ! supportsEncryption) )  // nothing to do...
             {
                 return valueNode;
@@ -450,18 +812,77 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
             final Element result = resultDoc.createElement("Value");
             result.setAttribute( XmlPayloadView.ATTR_IS_PROTECTED, XmlPayloadView.boolToString(encrypt) );
             final String nodeValue = valueNode.getTextContent();
-            result.setTextContent(isProtected ? transform(nodeValue) : encryptInner(nodeValue));
+            result.setTextContent( isProtected ? decrypt(nodeValue) : encrypt(nodeValue));
             return result;
         }
 
-        public String encryptInner(String plainText)
+        public String encrypt(String plainText)
         {
             return Base64.getEncoder().encodeToString(cipher.apply(plainText.getBytes(StandardCharsets.UTF_8)));
         }
 
-        public String transform(String base64CipherText)
+        public String decrypt(String base64CipherText)
         {
-            return new String(cipher.apply(Base64.getDecoder().decode(base64CipherText)), StandardCharsets.UTF_8);
+            final byte[] binary = Base64.getDecoder().decode( base64CipherText );
+            final byte[] decoded = cipher.apply( binary );
+            return new String( decoded, StandardCharsets.UTF_8);
         }
+    }
+
+    public Version getAppVersion() {
+        return outerHeader.appVersion;
+    }
+
+    public OuterEncryptionAlgorithm getOuterEncryptionAlgorithm() {
+        return outerHeader.getOuterEncryptionAlgorithm();
+    }
+
+    public FileHeader.InnerEncryptionAlgorithm getInnerEncryptionAlgorithm() {
+
+        final TLV<?> tlv;
+        if ( outerHeader.isV3() )
+        {
+            tlv = outerHeader.get( TLV.OuterHeaderType.INNER_RANDOM_STREAM_ID );
+        } else {
+            tlv = innerHeader.getHeader( TLV.InnerHeaderType.INNER_RANDOM_STREAM_ID ).orElseThrow(() -> new RuntimeException("Inner header lacks RANDOM_STREAM_ID"));
+        }
+        final int typeId = tlv.numericValue().intValue();
+        return FileHeader.InnerEncryptionAlgorithm.lookup( typeId ).orElseThrow(() -> new RuntimeException("Unhandled inner encryption type: " + typeId));
+    }
+
+    public long getTransformRounds()
+    {
+        /*
+         * Up to KDBX 3.1, the number of rounds for AES-KDF was stored in the header field with ID 6 (TransformRounds),
+         * and the seed for the transformation was stored in the header field with ID 5 (TransformSeed).
+         * These two fields are obsolete now.
+         * As of KDBX 4, key derivation function parameters are stored in the header field with ID 11 (KdfParameters).
+         * The parameters are serialized as a VariantDictionary (with the KDF UUID being stored in '$UUID');
+         * see the files KdfParameters.cs and VariantDictionary.cs.
+         * For details on the parameters being used by AES-KDF and Argon2, see AesKdf.cs and Argon2Kdf.cs.
+         */
+        if ( outerHeader.isV3() )
+        {
+            final TLV<TLV.OuterHeaderType> transformRounds = outerHeader.get( TLV.OuterHeaderType.TRANSFORM_ROUNDS );
+            return transformRounds.numericValue().longValue();
+        }
+        return switch( outerHeader.getKDF() ) {
+            case AES_KDBX3, AES_KDBX4 -> outerHeader.getKdfParams().get( VariantDictionary.KDF_AES_ROUNDS ).getJavaValue( Long.class );
+            case ARGON2D, ARGON2ID -> outerHeader.getKdfParams().get( VariantDictionary.KDF_ARGON2_ITERATIONS).getJavaValue( Long.class );
+        };
+    }
+
+    public void setTransformRounds(long rounds) {
+        if ( outerHeader.isV3() )
+        {
+            final TLV<TLV.OuterHeaderType> transformRounds = outerHeader.get( TLV.OuterHeaderType.TRANSFORM_ROUNDS );
+            transformRounds.setLongValue( rounds );
+            return;
+        }
+        final VariantDictionary.VariantDictionaryEntry entry = switch( outerHeader.getKDF() ) {
+            case AES_KDBX3, AES_KDBX4 -> outerHeader.getKdfParams().get( VariantDictionary.KDF_AES_ROUNDS );
+            case ARGON2D, ARGON2ID -> outerHeader.getKdfParams().get( VariantDictionary.KDF_ARGON2_ITERATIONS );
+        };
+        entry.setJavaValue( rounds, Long.class );
     }
 }

@@ -16,10 +16,15 @@
 package de.codesourcery.keepass.core;
 
 import de.codesourcery.keepass.core.crypto.Credential;
-import de.codesourcery.keepass.core.datamodel.*;
+import de.codesourcery.keepass.core.datamodel.Entry;
+import de.codesourcery.keepass.core.datamodel.EntryGroup;
+import de.codesourcery.keepass.core.datamodel.KeyValueItem;
+import de.codesourcery.keepass.core.datamodel.StringKeyValueItem;
 import de.codesourcery.keepass.core.fileformat.Database;
 import de.codesourcery.keepass.core.fileformat.XmlPayloadView;
-import de.codesourcery.keepass.core.util.*;
+import de.codesourcery.keepass.core.util.IResource;
+import de.codesourcery.keepass.core.util.Serializer;
+import de.codesourcery.keepass.core.util.XmlHelper;
 import junit.framework.TestCase;
 
 import javax.crypto.BadPaddingException;
@@ -32,12 +37,12 @@ import static org.junit.Assert.assertArrayEquals;
 
 public class MainTest extends TestCase
 {
-    public void testRoundtrip() throws IOException, BadPaddingException
+    public void testV31Roundtrip() throws IOException, BadPaddingException
     {
         final List<Credential> credentials = List.of(Credential.password("test".toCharArray()));
         final IResource resource = IResource.classpath("/test.kdbx");
 
-        final Database db = Main.load(resource, credentials);
+        final Database db = Database.read( credentials, resource );
 
         System.out.println("OK");
         System.out.println(XmlHelper.toString(db.getDecryptedXML()));

@@ -18,6 +18,7 @@ package de.codesourcery.keepass.core.fileformat;
 import de.codesourcery.keepass.core.crypto.Hash;
 import de.codesourcery.keepass.core.util.Logger;
 import de.codesourcery.keepass.core.util.LoggerFactory;
+import de.codesourcery.keepass.core.util.Misc;
 import de.codesourcery.keepass.core.util.Serializer;
 import org.apache.commons.lang3.Validate;
 
@@ -49,7 +50,6 @@ public class PayloadBlock
     {
         Validate.notNull(blockHash, "blockHash must not be null");
         Validate.notNull(blockData, "blockData must not be null");
-        Validate.isTrue(blockHash.length>0);
         this.blockId = blockId;
         this.blockHash = blockHash;
         this.blockData = blockData;
@@ -105,7 +105,7 @@ public class PayloadBlock
         final byte[] blockData = blockSize > 0 ? helper.readBytes(blockSize, "payload block data") : new byte[0];
 
         LOG.trace("Got payload block of type 0x" + Integer.toHexString(blockId) + ", length=" + blockSize
-                               + ", hash=" + TypeLengthValue.toHexString(blockHash));
+                               + ", hash=" + Misc.toHexString(blockHash));
         final PayloadBlock result = new PayloadBlock(blockId, blockHash, blockData, isCompressedPayload);
         if ( ! result.checksumOk() ) {
             throw new RuntimeException("Checksum failure on block "+result);
@@ -131,7 +131,7 @@ public class PayloadBlock
     {
         return "PayloadBlock{" +
                    "blockId=" + blockId +
-                   ", blockHash=" + TypeLengthValue.toHexString(blockHash) +
+                   ", blockHash=" + Misc.toHexString(blockHash) +
                    ", blockSize=" + blockData.length +
                    ", gzipCompressed=" + gzipCompressed +
                    '}';

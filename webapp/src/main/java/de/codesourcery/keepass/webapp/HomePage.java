@@ -46,10 +46,15 @@ import org.danekja.java.util.function.serializable.SerializableFunction;
 
 import javax.crypto.BadPaddingException;
 import javax.servlet.http.HttpServletRequest;
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -173,12 +178,28 @@ public class HomePage extends WebPage
         password.setRequired(true);
 
         final Button downloadLink = new Button("downloadLink") {
-            @Override public void onSubmit() { sendVault(); }
+            @Override public void onSubmit() {
+                try
+                {
+                    sendVault();
+                } catch(Exception ex) {
+                    LOG.error( "Caught ", ex );
+                    error("Something went wrong: "+ex.getMessage());
+                }
+            }
         };
 
         final FileUploadField upload = new FileUploadField("fileUpload");
         final Button uploadButton = new Button("uploadButton") {
-            @Override public void onSubmit() { mergeFiles(upload); }
+            @Override public void onSubmit() {
+                try
+                {
+                    mergeFiles( upload );
+                } catch(Exception e) {
+                    LOG.error( "Caught ", e );
+                    error("Something went wrong: "+e.getMessage());
+                }
+            }
         };
         queue(downloadLink, password, uploadForm, upload, uploadButton, feedback, table );
     }
@@ -199,16 +220,14 @@ public class HomePage extends WebPage
             {
                 LOG.info("onSubmit(): Trying to open " + up.getClientFileName());
                 final IResource r = IResource.inputStream(up::getInputStream,up.getClientFileName());
-                final Database d = new Database();
-                d.load(credentials, r );
+                final Database d = Database.read(credentials, r );
                 databases.add(d);
                 LOG.info("onSubmit(): Successfully opened " + up.getClientFileName());
             }
             final File original = configuration.getMergeTarget();
 
-            final Database originalDb = new Database();
             LOG.info("onSubmit(): Opening local file " + original.getAbsolutePath());
-            originalDb.load(credentials, IResource.file( original ) );
+            final Database originalDb = Database.read(credentials, IResource.file( original ) );
             LOG.info("onSubmit(): Successfully opened local file " + original.getAbsolutePath());
             databases.add(originalDb);
 
@@ -283,10 +302,10 @@ public class HomePage extends WebPage
             throw new IOException("Failed to rename " + tmpOut.getAbsolutePath() + " -> " + original.getAbsolutePath());
         }
         // make sure we're able to decrypt the new file properly
-        final Database test = new Database();
+        final Database test;
         try
         {
-            test.load(credentials, IResource.file(original));
+            test = Database.read(credentials, IResource.file(original));
             new XmlPayloadView(test).getGroups();
         }
         catch(IOException e) {
@@ -311,7 +330,7 @@ public class HomePage extends WebPage
         try
         {
             final List<Credential> credentials = List.of(Credential.password(password.getModelObject().toCharArray()));
-            new Database().load(credentials, IResource.file(file));
+            new Database().read(credentials, IResource.file(file));
             delayPerClient.remove(remoteIP);
         }
         catch (IOException e)

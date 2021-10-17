@@ -17,16 +17,11 @@ package de.codesourcery.keepass.webapp;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.wicket.Component;
 import org.apache.wicket.Page;
-import org.apache.wicket.RestartResponseAtInterceptPageException;
-import org.apache.wicket.application.IComponentInstantiationListener;
 import org.apache.wicket.protocol.http.WebApplication;
-import org.apache.wicket.request.cycle.RequestCycle;
+import org.apache.wicket.util.time.Duration;
 
-import javax.servlet.http.HttpServletRequest;
 import java.io.IOException;
-import java.security.cert.X509Certificate;
 
 /**
  * Web application entry point.
@@ -56,6 +51,8 @@ public class WicketApplication extends WebApplication
     protected void init()
     {
         super.init();
+
+        getRequestCycleSettings().setTimeout( Duration.minutes( 10 ) );
 
         getComponentInstantiationListeners().add(component ->
         {

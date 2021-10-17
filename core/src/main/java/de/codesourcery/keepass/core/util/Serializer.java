@@ -18,13 +18,24 @@ package de.codesourcery.keepass.core.util;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
 public class Serializer implements Closeable, AutoCloseable
 {
     private int offset;
-    private final InputStream in;
-    private final OutputStream out;
+    private InputStream in;
+    private OutputStream out;
+
+    private boolean writeCopyToTmpBuffer; // whether each byte should also be written to the tmp buffer
+    private ByteArrayOutputStream tmpBuffer = new ByteArrayOutputStream();
 
     public Serializer(InputStream in)
     {
@@ -33,12 +44,43 @@ public class Serializer implements Closeable, AutoCloseable
         this.out = null;
     }
 
+    public void wrapInputStream(Misc.IOFunction<InputStream,InputStream> wrapperFunc) throws IOException {
+        wrapInputStream( (Void) null, (in,data) -> wrapperFunc.apply(in) );
+    }
+
+    public <DATA> void wrapInputStream(DATA data, Misc.IOBiFunction<InputStream,DATA,InputStream> wrapperFunc) throws IOException {
+        this.in = wrapperFunc.apply( this.in, data );
+    }
+
+    public void wrapOutputStream(Misc.IOFunction<OutputStream,OutputStream> wrapperFunc) throws IOException {
+        wrapOutputStream( (Void) null, (in,data) -> wrapperFunc.apply(in) );
+    }
+
+    public <DATA> void wrapOutputStream(DATA data, Misc.IOBiFunction<OutputStream,DATA,OutputStream> wrapperFunc) throws IOException {
+        this.out = wrapperFunc.apply( this.out, data );
+    }
+
     private static boolean needsBuffering(InputStream in) {
         return !(in instanceof ByteArrayInputStream) && !(in instanceof BufferedInputStream);
     }
 
     private static boolean needsBuffering(OutputStream in) {
         return !(in instanceof ByteArrayOutputStream) && !(in instanceof BufferedOutputStream);
+    }
+
+    public void setWriteCopyToTmpBuffer(boolean writeCopyToTmpBuffer)
+    {
+        if ( this.writeCopyToTmpBuffer && ! writeCopyToTmpBuffer ) {
+            this.tmpBuffer = new ByteArrayOutputStream();
+        }
+        this.writeCopyToTmpBuffer = writeCopyToTmpBuffer;
+    }
+
+    public byte[] getTmpBuffer() {
+        if ( ! this.writeCopyToTmpBuffer ) {
+            throw new IllegalStateException( "Copying to tmp buffer is disabled, reading from it makes no sense");
+        }
+        return tmpBuffer.toByteArray();
     }
 
     public Serializer(OutputStream out)
@@ -66,6 +108,9 @@ public class Serializer implements Closeable, AutoCloseable
             }
             if ( cnt != count ) {
                 throw new IOException("Premature end of file, expected "+count+" bytes but got only "+cnt);
+            }
+            if ( writeCopyToTmpBuffer ) {
+                tmpBuffer.write( buffer );
             }
             return buffer;
         }
@@ -105,6 +150,9 @@ public class Serializer implements Closeable, AutoCloseable
     {
         out.write(data, offset, length);
         this.offset += data.length;
+        if ( writeCopyToTmpBuffer ) {
+            tmpBuffer.write( data , offset, length );
+        }
     }
 
     public void writeLong(long value) throws IOException
@@ -131,10 +179,18 @@ public class Serializer implements Closeable, AutoCloseable
         offset += 1;
         out.write(high);
         offset += 1;
+        if ( writeCopyToTmpBuffer ) {
+            tmpBuffer.write( low );
+            tmpBuffer.write( high );
+        }
     }
 
     public void writeByte(int value) throws IOException {
         out.write(value);
+        if ( writeCopyToTmpBuffer )
+        {
+            tmpBuffer.write( value );
+        }
         offset++;
     }
 
@@ -145,6 +201,9 @@ public class Serializer implements Closeable, AutoCloseable
         {
             final byte[] result = in.readAllBytes();
             this.offset += result.length;
+            if ( writeCopyToTmpBuffer ) {
+                tmpBuffer.write( result );
+            }
             return result;
         }
         catch(IOException e) {
@@ -163,6 +222,9 @@ public class Serializer implements Closeable, AutoCloseable
                 throw new EOFException("Premature end of file, expected to read one byte");
             }
             this.offset++;
+            if ( writeCopyToTmpBuffer ) {
+                tmpBuffer.write( result );
+            }
             return result;
         }
         catch(IOException e) {

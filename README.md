@@ -1,6 +1,6 @@
 # keepassmerge
 
-A Java library & command-line tool for combining multiple KeePassX 2.x files into one.
+A Java library & command-line tool for combining multiple KDBX3 and KDBX4 files into one.
 
 I mostly build this to scratch my own itch, namely the fact that I've been using KeePassX on various devices (desktop,laptop,at work,etc.)
 but never really felt much of an urge to upload the .kdbx file to some "free" file hoster to be able to share the same 
@@ -9,7 +9,7 @@ file across all those devices...I have little trust in the security provided by 
 As is to be expected, over time the files on each device started to diverge more and more, up to the point where I had to sometimes 
 reset my password for some service because the "right" KeePassX file with the corresponding password was on a different device...
 
-To finally have my cake and eat it, I wrote a small Java library to read,merge and write KeePassX 2.x files and integrated it into a
+To finally have my cake and eat it, I wrote a small Java library to read,merge and write .kdbx files and integrated it into a
 web application that I'm running on my own physical server. The command-line tool is working but mostly exists because I wanted something
 to test my library before starting to work on the web application.
 
@@ -45,7 +45,7 @@ Passwords used for decrypting/encrypting the .kdbx files are read by trying the 
 Note that obviously password sources 2. and 3. only make sense when operating on multiple files that all use the same password.
 
 ```
-user@host $ java --enable-preview -jar core/target/keepassmerge.jar 
+user@host $ java -jar core/target/keepassmerge.jar 
 
 Usage: [-v|--verbose] [-d|--debug] <command> [command arguments]
 
@@ -60,7 +60,7 @@ combine [--auto-adjust-rounds <milliseconds>] <src1> <src2> <...> <destination f
 So to combine multiple files you'd run something like
 
 ```
-java --enable-preview -jar core/target/keepassmerge.jar  file1.kdbx file2.kdbx output.kdbx
+java -jar core/target/keepassmerge.jar  file1.kdbx file2.kdbx output.kdbx
 ```
 It's an error to specify any file more than once ; merging will also fail if the output file already exists. You can use the 
 '--auto-adjust-rounds' to adjust the number of 'rounds' so that deriving the master key takes at least the given amount of time.
@@ -73,9 +73,16 @@ This is useful to make brute-forcing the file's password harder.
 - The merge algorithm will use the database file with the most entries as the merge target
 - TODO: I'm currently *not* merging groups missing from the merge target. You'll get a warning when trying to merge files that have different groups
 
+## Known Issues 
+
+- I've only implemented using AES for the outer encryption and Salsa20/ChaCha for the inner encryption as this is KeePassX / KeePassXC use by default
+- I don't use anything except the default "Root" group - the code responsible for merging will crash if you any other groups ("Recycle Bin" is fine as it will get ignored)
+
 ## TODO
 
-- add support for adding missing groups as well
+- add support for TwoFish / ChaCha20 outer encryption
+- add support for more Argon2i KDF
+- add support for merging groups as well
 
 # web application
 
