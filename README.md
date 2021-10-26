@@ -1,6 +1,6 @@
 # keepassmerge
 
-A Java library & command-line tool for reading/writing/merging KDBX 3.1 and KDBX 4.0 files.
+A Java library & command-line tool for reading, writing and merging KDBX 3.1 and KDBX 4.0 files.
 
 I mostly build this to scratch my own itch, namely the fact that I've been using KeePassX on various devices (desktop,laptop,at work,etc.)
 but never really felt much of an urge to upload the .kdbx file to some "free" file hoster to be able to share the same 
@@ -169,8 +169,9 @@ This is useful to make brute-forcing the file's password harder.
 ## TODO
 
 - add support for TwoFish / ChaCha20 outer encryption
-- add support for more Argon2i KDF
-- add support for merging groups as well
+- add support for more KDFs
+- add support for merging entries in groups other than "Root" as well
+- clean up code / API
 
 # web application
 
