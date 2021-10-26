@@ -264,7 +264,7 @@ public class Main
         return Optional.empty();
     }
 
-    private static char[] readPassword(String description)
+    public static char[] readPassword(String description)
     {
         final Optional<char[]> envPwd = readPasswordFromEnv();
         if ( envPwd.isPresent() ) {
@@ -288,7 +288,7 @@ public class Main
         return pwd;
     }
 
-    private static char[] stripANSI(char[] input)
+    public static char[] stripANSI(char[] input)
     {
         if ( input == null ) {
             return new char[0];
@@ -318,7 +318,7 @@ public class Main
         return result.toString().toCharArray();
     }
 
-    private static char[] trim(char[] input) {
+    public static char[] trim(char[] input) {
         if ( input == null ) {
             return new char[0];
         }
