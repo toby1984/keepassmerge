@@ -23,7 +23,7 @@ Here's a short usage example. I intentionally tried to not be specific about wha
 
 My code uses a XmlPayloadView class that is a thin wrapper around the underlying XML document and just provides some convenience methods for making the XML access slightly less painful.
 
-```
+```java
 package de.codesourcery.keepass.core;
 
 import de.codesourcery.keepass.core.crypto.Credential;
