@@ -45,22 +45,15 @@ public class CompositeKey
 
         final Hash digest = Hash.sha256();
 
-        // To generate the composite key for a .kdbx file :
-        //     1. You must hash (with SHA-256) all credentials needed (passphrase, key of the keyfile, Windows User Account),
         final Optional<byte[]> passwordHash = password.map(x -> digest.digest(x.data));
         final Optional<byte[]> keyfileHash = keyfile.map(x -> digest.digest(x.data));
         final Optional<byte[]> windowUserAccountHash = windowsUserAccount.map(x -> digest.digest(x.data));
 
-        //     2. You must then concatenate ALL hashed credentials in this order : passphrase, keyfile, Windows User Account,
         final ByteArrayOutputStream concat = new ByteArrayOutputStream();
         passwordHash.ifPresent(concat::writeBytes );
         keyfileHash.ifPresent(concat::writeBytes );
         windowUserAccountHash.ifPresent(concat::writeBytes );
 
-        // 3. You must then hash the result of the concatenation.
-        // Even though you have just one credential (for example, just a passphrase),
-        // you still need to hash it twice (a first one for the step 1, and second one for the step 3).
-        // The result of the hash is the composite key
         return new CompositeKey(digest.digest(concat.toByteArray() ));
     }
 }

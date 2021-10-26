@@ -71,9 +71,6 @@ public class Database
 
     private static final int MAGIC = 0x9aa2d903;
 
-    // This code is based on the brilliant analysis done here:
-    // https://gist.githubusercontent.com/msmuenchen/9318327/raw/60d16b3faf5c680dee2be9d8b5cbfe877706f004/gistfile1.txt
-
     public IResource resource;
     public final FileHeader outerHeader = new FileHeader();
     public InnerHeader innerHeader = new InnerHeader(); // available in file format >= V4 only
@@ -219,27 +216,6 @@ public class Database
         {
             final byte[] headerData = buffer.getTmpBuffer();
 
-            /*
-    // hash header
-    QByteArray headerHash = CryptoHash::hash(headerData, CryptoHash::Sha256);
-
-    // write HMAC-authenticated cipher stream
-    QByteArray hmacKey = KeePass2::hmacKey(masterSeed, db->transformedDatabaseKey());
-    QByteArray headerHmac = CryptoHash::hmac(headerData, HmacBlockStream::getHmacKey(UINT64_MAX, hmacKey), CryptoHash::Sha256);
-
-    CHECK_RETURN_FALSE(writeData(device, headerHash));
-    CHECK_RETURN_FALSE(writeData(device, headerHmac));
-
-    QScopedPointer<HmacBlockStream> hmacBlockStream;
-    QScopedPointer<SymmetricCipherStream> cipherStream;
-
-    hmacBlockStream.reset(new HmacBlockStream(device, hmacKey));
-    if (!hmacBlockStream->open(QIODevice::WriteOnly)) {
-        raiseError(hmacBlockStream->errorString());
-        return false;
-    }
-             */
-
             // write header hash (SHA-256)
             buffer.writeBytes( calculateHeaderHash() );
             hmacKey = hmacKey( this.outerHeader.get( TLV.OuterHeaderType.MASTER_SEED ), masterKey.transformedKey );
@@ -340,14 +316,8 @@ public class Database
         kdfFunc.init( rounds, transformSeed, isBenchmark, dictionary );
         byte[] kdfResult = kdfFunc.transform( compositeKey.data );
 
-        // 5. concatenate the Master Seed to the transformed_key (transformed_key = concat(Master Seed, transformed_key) ),
         final byte[] transformedKey = Misc.concat( masterSeed.rawValue, kdfResult );
-
-        // 6. hash (with SHA-256) the transformed_key to get the final master key (final_master_key = sha256(transformed_key) ).
         final byte[] finalKey = Hash.sha256(transformedKey);
-
-        // You now have the final master key, you can finally decrypt the database
-        // (the part of the file after the header for .kdb, and after the End of Header field for .kdbx).
         return new MasterKey( outerHeader.getOuterEncryptionAlgorithm(), finalKey, kdfResult );
     }
 
@@ -471,21 +441,11 @@ without knowing the master key). Directly after the hash, the HMAC-SHA-256 value
             final byte[] expectedHeaderHMAC = buffer.readBytes( 256 / 8, "Expected HMAC-SHA-256" );
             LOG.debug( "HMAC SHA-256: " + Misc.toHexString( expectedHeaderHMAC, "" ) );
 
-            // QByteArray hmacKey = KeePass2::hmacKey(m_masterSeed, db->transformedDatabaseKey())
             hmacKey = hmacKey( this.outerHeader.get( TLV.OuterHeaderType.MASTER_SEED ), finalKey.get().transformedKey );
 
-            // QByteArray hmacKey2 = HmacBlockStream::getHmacKey(UINT64_MAX, hmacKey);
             final byte[] hmacKey2 = HMACInputStream.getHMacKey( 0xffffffff_ffffffffL, hmacKey );
 
-            // QByteArray actualHeaderHMAC = CryptoHash::hmac(headerData, key, CryptoHash::Sha256 )
             final byte[] actualHeaderHMAC = calculateHMAC256( headerData, hmacKey2 );
-            /*
-             * if (headerHmac != actualHeaderHMAC)) {
-             *     raiseError(tr("Invalid credentials were provided, please try again.\n"
-             *                   "If this reoccurs, then your database file may be corrupt.") + " " + tr("(HMAC mismatch)"));
-             *     return false;
-             * }
-             */
             if ( ! Arrays.equals( expectedHeaderHMAC, actualHeaderHMAC ) ) {
                 LOG.error( "HMAC error - expected: " + Misc.toHexString( expectedHeaderHMAC ) );
                 LOG.error( "HMAC error - actual  : " + Misc.toHexString( actualHeaderHMAC ) );
@@ -541,14 +501,6 @@ without knowing the master key). Directly after the hash, the HMAC-SHA-256 value
             LOG.trace("*** payload ***\n" + Serializer.hexdump(decryptedPayload));
         }
 
-        /*
-6) Payload area (from end of header until file end).
-6.1) BYTE[len(STREAMSTARTBYTES)] BYTE string. When payload area is successfully decrypted, this area MUST equal STREAMSTARTBYTES. Normally the length is 32 bytes.
-6.2) There are at least 2 payload blocks in the file, each is laid out [LE DWORD dwBlockId, BYTE[32] sHash, LE DWORD dwBlockSize, BYTE[dwBlockSize] bData].
-
-dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the last data in the file.
-         */
-
         // check that decryption worked correctly (<V4 only as >= V4 already uses HMACStream to verify the ciphertext)
         byte[] expected = null;
         if ( outerHeader.isV3() )
@@ -565,28 +517,6 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
                 }
             }
         }
-
-        /*
-6) Payload area (from end of header until file end).
-6.1) BYTE[len(STREAMSTARTBYTES)] BYTE string. When payload area is successfully decrypted, this area MUST equal STREAMSTARTBYTES. Normally the length is 32 bytes.
-6.2) There are at least 2 payload blocks in the file, each is laid out [LE DWORD dwBlockId, BYTE[32] sHash, LE DWORD dwBlockSize, BYTE[dwBlockSize] bData].
-
-dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the last data in the file.
-
-.....
-
-9) If COMPRESSIONFLAGS = 1, run bData through gzdecode() to obtain the plain Keepass XML file; if COMPRESSIONFLAGS is 0, it is already in bData.
-
-10) Depending on INNERRANDOMSTREAMID, set up the inner stream context. 0 will mean all passwords in the XML will be in plain text, 1 that they are encrypted with Arc4Variant (not detailed here) and 2 that they will be encrypted with Salsa20.
-
-11) Set up a Salsa20 context using key PROTECTEDSTREAMKEY and fixed IV [0xE8,0x30,0x09,0x4B,0x97,0x20,0x5D,0x2A].
-
-12) Sequentially(!) look in the XML for "Value" nodes with the "Protected" attribute set to "True" (a suitable xpath might be "//Value[@Protected='True']").
-
-13) Obtain their innerText and run it through base64_decode to obtain the encrypted password/data. Then, run it through salsa20 to obtain the cleartext data.
-
-14) Optionally, check the header for integrity by taking sha256() hash of the whole header (up to, but excluding, the payload start bytes) and compare it with the base64_encode()d hash in the XML node <HeaderHash>(...)</HeaderHash>.
-         */
 
         final Serializer payloadReader = new Serializer( new ByteArrayInputStream( decryptedPayload ) );
         byte[] xmlPayload;
@@ -709,16 +639,6 @@ dwBlockSize=0 and sHash=\0\0\...\0 (32x \0) signal the final block, this is the 
         return Hash.sha256(header.toByteArray());
     }
 
-    /*
-QByteArray KeePass2::hmacKey(const QByteArray& masterSeed, const QByteArray& transformedMasterKey)
-{
-    CryptoHash hmacKeyHash(CryptoHash::Sha512);
-    hmacKeyHash.addData(masterSeed);
-    hmacKeyHash.addData(transformedMasterKey);
-    hmacKeyHash.addData(QByteArray(1, '\x01'));
-    return hmacKeyHash.result();
-}
-     */
     private static byte[] hmacKey(TLV<TLV.OuterHeaderType> masterSeed, byte[] transformedMasterKey)
     {
         Validate.notNull( masterSeed, "masterSeed must not be null" );

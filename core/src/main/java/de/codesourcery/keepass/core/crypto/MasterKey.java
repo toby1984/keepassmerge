@@ -72,15 +72,11 @@ public class MasterKey
 
     private byte[] process(byte[] payload, byte[] encryptionIV, boolean encrypt) throws BadPaddingException
     {
-        /*
-7) Depending on CIPHERID, set up a decryption context with key master_key and IV ENCRYPTIONIV.
-For the default AES encryption, use AES-CBC with PKCS#7-style padding. This will yield raw_payload_area.
-         */
         try
         {
-            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            SecretKeySpec secretKeySpec = new SecretKeySpec(this.data, "AES");
-            AlgorithmParameterSpec paramSpec = new IvParameterSpec(encryptionIV);
+            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            final SecretKeySpec secretKeySpec = new SecretKeySpec(this.data, "AES");
+            final AlgorithmParameterSpec paramSpec = new IvParameterSpec(encryptionIV);
             cipher.init(encrypt ? Cipher.ENCRYPT_MODE : Cipher.DECRYPT_MODE, secretKeySpec, paramSpec);
             return cipher.doFinal(payload);
         }

@@ -34,7 +34,7 @@ import java.util.Optional;
  */
 public class FileHeader
 {
-    // This code is actually based on the brilliant analysis done here:
+    // This code is based on the brilliant analysis done here:
     // see https://gist.github.com/lgg/e6ccc6e212d18dd2ecd8a8c116fb1e45
 
     public enum Version
@@ -74,12 +74,6 @@ public class FileHeader
         }
     }
 
-    /*
-     10) Depending on INNERRANDOMSTREAMID, set up the inner stream context.
-      0 will mean all passwords in the XML will be in plain text,
-      1 that they are encrypted with Arc4Variant (not detailed here)
-      2 that they will be encrypted with Salsa20.
-     */
     // Type of encryption applied to each password contained in the payload XML
     public enum InnerEncryptionAlgorithm
     {

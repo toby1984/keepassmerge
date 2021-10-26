@@ -48,17 +48,6 @@ public class Salsa20 implements IStreamCipher
         cipher.init(encrypt, params );
     }
 
-    /*
-10) Depending on INNERRANDOMSTREAMID, set up the inner stream context. 0 will mean all passwords in the XML will be in plain text, 1 that they are encrypted with Arc4Variant (not detailed here) and 2 that they will be encrypted with Salsa20.
-
-11) Set up a Salsa20 context using key SHA256(PROTECTEDSTREAMKEY) and fixed IV [0xE8,0x30,0x09,0x4B,0x97,0x20,0x5D,0x2A].
-
-12) Sequentially(!) look in the XML for "Value" nodes with the "Protected" attribute set to "True" (a suitable xpath might be "//Value[@Protected='True']").
-
-13) Obtain their innerText and run it through base64_decode to obtain the encrypted password/data. Then, run it through salsa20 to obtain the cleartext data.
-
-14) Optionally, check the header for integrity by taking sha256() hash of the whole header (up to, but excluding, the payload start bytes) and compare it with the base64_encode()d hash in the XML node <HeaderHash>(...)</HeaderHash>.
-     */
     public byte[] process(byte[] input)
     {
         Validate.notNull(input, "cipherText must not be null");

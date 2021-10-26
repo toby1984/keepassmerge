@@ -204,31 +204,10 @@ public class HMACInputStream extends InputStream implements AutoCloseable
         return true;
     }
 
-    public boolean eof() {
-        return eof;
-    }
-
-    /*
-    QByteArray HmacBlockStream::getCurrentHmacKey() const
-    {
-        return getHmacKey(m_blockIndex, m_key);
-    }
-     */
     public byte[] getCurrentHMacKey() {
         return getHMacKey( blockIndex, key );
     }
 
-    /*
-    QByteArray HmacBlockStream::getHmacKey(quint64 blockIndex, const QByteArray& key)
-{
-    Q_ASSERT(key.size() == 64);
-    QByteArray indexBytes = Endian::sizedIntToBytes<quint64>(blockIndex, ByteOrder);
-    CryptoHash hasher(CryptoHash::Sha512);
-    hasher.addData(indexBytes);
-    hasher.addData(key);
-    return hasher.result();
-}
-     */
     public static byte[] getHMacKey(long blockIndex, byte[] key)
     {
         Validate.isTrue(  key.length == 64, "Expected a 64-byte key but got only "+key.length+" bytes.");
