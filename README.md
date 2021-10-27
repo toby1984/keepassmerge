@@ -1,6 +1,6 @@
 # keepassmerge
 
-A Java library & command-line tool for reading, writing and merging KDBX 3.1 and KDBX 4.0 files.
+Java classes & command-line tool for reading, writing and merging KDBX 3.1 and KDBX 4.0 files.
 
 I mostly build this to scratch my own itch, namely the fact that I've been using KeePassX on various devices (desktop,laptop,at work,etc.)
 but never really felt much of an urge to upload the .kdbx file to some "free" file hoster to be able to share the same 
