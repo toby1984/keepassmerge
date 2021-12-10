@@ -3,7 +3,7 @@
   <parent>
     <groupId>de.codesourcery.keepass</groupId>
     <artifactId>keepassmerge-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1-SNAPSHOT</version>
   </parent>
   <artifactId>keepassmerge-core</artifactId>
   <name>keepassmerge-core</name>
