@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>de.codesourcery.keepass</groupId>
   <artifactId>keepassmerge-parent</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>keepassmerge-parent</name>
   <properties>
@@ -27,7 +27,7 @@
   </developers>
   <scm>
     <developerConnection>scm:git:ssh://toby1984@github.com/toby1984/keepassmerge.git</developerConnection>
-    <tag>keepassmerge-parent-1.0.0</tag>
+    <tag>HEAD</tag>
   </scm>
   <dependencyManagement>
     <dependencies>
@@ -45,12 +45,12 @@
       <dependency>
         <groupId>de.codesourcery.keepass</groupId>
         <artifactId>keepassmerge-core</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
       </dependency>
       <dependency>
         <groupId>de.codesourcery.keepass</groupId>
         <artifactId>keepassmerge-webapp</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
       </dependency>
       <dependency>
         <groupId>javax.mail</groupId>
