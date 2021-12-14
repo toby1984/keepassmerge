@@ -12,7 +12,7 @@
     <javac.release>17</javac.release>
     <wicket.version>8.9.0</wicket.version>
     <main.basedir>${project.basedir}</main.basedir>
-    <log4j.version>2.15.0</log4j.version>
+    <log4j.version>2.16.0</log4j.version>
   </properties>
   <developers>
     <developer>
